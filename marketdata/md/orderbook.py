@@ -77,7 +77,8 @@ async def snapshot(c):
     for name, r in zip(SOURCES, res):
         if isinstance(r, Exception):
             log.debug("%s %s defter hatası: %s", name, c, r)
-        elif r[0] and r[1]:
+        elif r[0] and r[1] and max(p for p,q in r[0]) < min(p for p,q in r[1]) and all(
+                math.isfinite(p) and math.isfinite(q) and p>0 and q>=0 for levels in r for p,q in levels):
             books[name] = r
     if not books:
         return None
@@ -85,7 +86,9 @@ async def snapshot(c):
     mid = (ref[0][0][0] + ref[1][0][0]) / 2
     step = nice_step(mid)
     s = summarize(books, mid, step)
-    s.update({"coin": c, "mid": mid, "step": step, "sources": list(books)})
+    s.update({"coin": c, "mid": mid, "step": step, "sources": list(books),
+              "missing_sources": [n for n in SOURCES if n not in books], "collection_mode": "REST sampled",
+              "note": "Finite depth; reported bands may be only partly visible. Sources are not synchronized."})
     return s
 
 LATEST: dict = {}
@@ -108,7 +111,8 @@ async def poll():
             except Exception as e:
                 log.warning("defter yazma hatası: %s", e)
         from . import state
-        state.stream_health["orderbook"] = {"last_msg": time.time(), "connected": True, "reconnects": 0, "msgs": len(LATEST)}
+        newest = max((datetime.fromisoformat(d["ts"]).timestamp() for d in LATEST.values()), default=0)
+        state.stream_health["orderbook"] = {"last_msg": newest, "connected": bool(time.time()-newest<120), "reconnects": 0, "msgs": len(LATEST)}
         await asyncio.sleep(max(5, 60 - (time.time() - t0)))
 
 async def history(coin, hours=6):
@@ -119,7 +123,13 @@ async def history(coin, hours=6):
 
 async def latest(coin):
     if coin in LATEST:
-        return LATEST[coin]
-    async with db.pool.acquire() as cn:
-        r = await cn.fetchrow("SELECT data, ts FROM depth_snap WHERE coin=$1 ORDER BY ts DESC LIMIT 1", coin)
-    return {**json.loads(r["data"]), "ts": r["ts"].isoformat()} if r else None
+        result = dict(LATEST[coin])
+    else:
+        async with db.pool.acquire() as cn:
+            r = await cn.fetchrow("SELECT data, ts FROM depth_snap WHERE coin=$1 ORDER BY ts DESC LIMIT 1", coin)
+        if not r:
+            return None
+        result = {**json.loads(r["data"]), "ts": r["ts"].isoformat()}
+    result["age_seconds"] = max(0, time.time()-datetime.fromisoformat(result["ts"]).timestamp())
+    result["stale"] = result["age_seconds"]>120
+    return result
