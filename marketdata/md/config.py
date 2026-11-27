@@ -41,3 +41,6 @@ OPTIONS_MAX_PAIN_CHANGE_PCT = _f("OPTIONS_MAX_PAIN_CHANGE_PCT", 2)
 OPTIONS_GEX_FLIP_MIN_USD = _f("OPTIONS_GEX_FLIP_MIN_USD", 1_000_000)
 RAW_RETENTION_HOURS = max(.25, min(48, _f("RAW_RETENTION_HOURS", 1)))
 RAW_JOURNAL_TARGET_MIB = max(8, min(8192, _f("RAW_JOURNAL_TARGET_MIB", 24)))
+
+# Production Telegram defaults to original full-resolution cards only.
+TELEGRAM_CARD_ONLY = os.environ.get("TELEGRAM_CARD_ONLY", "1") == "1"

@@ -28,6 +28,8 @@ jobs:
           cache-dependency-path: marketdata/requirements*.txt
       - run: pip install -r requirements.txt -r requirements-dev.txt
       - run: python -m compileall -q md main.py
+      - run: python -c "from pathlib import Path; p=Path('md/static/panel.html').read_text(); Path('/tmp/imperion-panel.js').write_text(p.split('<script>')[1].split('</script>')[0])"
+      - run: node --check /tmp/imperion-panel.js
       - run: python -m pytest -q
         env:
           TEST_DATABASE_URL: postgresql://postgres:test@localhost:5432/postgres

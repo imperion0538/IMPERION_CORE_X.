@@ -3,7 +3,7 @@ import asyncio, json, logging, time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 import aiohttp
-from . import analysis, card4k, charts, config, db, fmt, heatmap, http, reports, orderbook, state, whales, intelligence, outbox, quality
+from . import analysis, card4k, charts, config, db, fmt, heatmap, http, reports, orderbook, state, whales, intelligence, outbox, quality, research, scoring, macro
 
 log = logging.getLogger("telegram")
 API = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}"
@@ -11,6 +11,8 @@ WMAP = {"1s": "1h", "4s": "4h", "24s": "24h", "7g": "7d", "30g": "30d", "1h": "1
 
 async def send(chat, text):
     """Mesajı satır sınırlarından böler (HTML etiketi ortadan kesilmez); biçim reddedilirse düz metin dener."""
+    if config.TELEGRAM_CARD_ONLY:
+        return False
     s = await http.session()
     for part in fmt.split_message(text):
         async with s.post(f"{API}/sendMessage", json={"chat_id": chat, "text": part, "parse_mode": "HTML", "disable_web_page_preview": True}) as r:
@@ -32,8 +34,9 @@ async def photo(chat, png, caption, document=False):
     form.add_field("document" if document else "photo", png, filename="imperion.png", content_type="image/png")
     async with s.post(f"{API}/{'sendDocument' if document else 'sendPhoto'}", data=form) as r:
         if r.status != 200: log.warning("sendPhoto %s: %s", r.status, (await r.text())[:300])
-    if rest:
+    if rest and not config.TELEGRAM_CARD_ONLY:
         await send(chat, rest)
+    return r.status == 200
 
 CARD = Path(__file__).resolve().parents[1] / "assets" / "imperion-btc-tr-4k.png"
 
@@ -90,8 +93,27 @@ async def live_card(coin):
     a, h, d = await asyncio.gather(analysis.analysis(coin), heatmap.model(coin, "24h"), orderbook.latest(coin))
     return charts.analysis_card_png(a, h, d)
 
+async def send_live_4k(chat, coin, reason=""):
+    if coin not in config.COINS:
+        return False
+    from . import research_card
+    png = await research_card.build(coin)
+    caption = f"{coin} · 3840×2160 PNG"
+    if reason:
+        caption += "\n" + reason
+    return await photo(chat, png, caption, document=True)
+
 async def handle(chat, text):
-    parts = text.strip().split(); cmd = parts[0].split("@")[0].lower(); rest = parts[1:]
+    parts = text.strip().split()
+    if not parts:
+        return
+    cmd = parts[0].split("@")[0].lower()
+    rest = parts[1:]
+    if config.TELEGRAM_CARD_ONLY and cmd in ("/btc", "/eth", "/sol", "/analiz"):
+        coin = cmd[1:].upper() if cmd != "/analiz" else _args(rest, "24h")[0]
+        if coin not in config.COINS:
+            return await send(chat, f"{coin} canlı izlenmiyor.")
+        return await send_live_4k(chat, coin)
     if cmd in LIVE_ONLY:
         coin = _args(rest, "24h")[0]
         if coin not in config.COINS:
@@ -116,17 +138,43 @@ async def handle(chat, text):
         if coin not in config.COINS:
             return await send(chat, f"{coin} canlı izlenmiyor.")
         return await send(chat, intelligence.text(await intelligence.generate(coin)))
+    if cmd == "/senaryo":
+        coin = _args(rest, "24h")[0]
+        if coin not in config.COINS:
+            return await send(chat, f"{coin} canlı izlenmiyor.")
+        a = await analysis.analysis(coin)
+        return await send(chat, fmt.analysis_text(a) + "\n\nKoşullu senaryolar 4K kartta ve TA modülünde; teyit gerektirir.")
+    if cmd == "/makro":
+        m = await macro.latest_macro()
+        lines = ["<b>Makro göstergeler</b>"]
+        if m.get("dxy"): lines.append(f"DXY: {m['dxy']:.2f}")
+        if m.get("us10y"): lines.append(f"US 10Y: {m['us10y']:.2f}%")
+        if m.get("spx"): lines.append(f"SPX: {m['spx']:.0f}")
+        lines.append(f"Durum: {m.get('status')} | Yaş: {m.get('age_seconds', 0)//60} dk")
+        return await send(chat, "\n".join(lines))
+    if cmd == "/skor":
+        coin = _args(rest, "24h")[0]
+        if coin not in config.COINS:
+            return await send(chat, f"{coin} canlı izlenmiyor.")
+        s = await scoring.compute_scores(coin)
+        bias = s.get("direction_bias", {})
+        casc = s.get("cascade", {})
+        lines = [f"<b>{coin} skorlar</b>",
+                 f"Yön bias: {bias.get('score', 'N/A')} ({', '.join(bias.get('reasons', [])[:2])})",
+                 f"Cascade: {casc.get('score', 'N/A')} ({casc.get('level')})"]
+        return await send(chat, "\n".join(lines))
+    if cmd == "/rapor":
+        coin = _args(rest, "15m")[0]
+        if coin not in config.COINS:
+            return await send(chat, f"{coin} canlı izlenmiyor.")
+        return await send(chat, reports.format_report_text(await reports.generate_report(coin)))
     if cmd == "/kart":
         if rest and rest[0].lower() in ("arsiv", "arşiv"):
             return await send_card(chat)
         coin = _args(rest, "24h")[0]
-        if rest and rest[-1].lower() == "ozet":
+        if not config.TELEGRAM_CARD_ONLY and rest and rest[-1].lower() == "ozet":
             return await photo(chat, await live_card(coin), f"<b>{coin} canlı özet kartı</b> · 1920×1080")
-        from . import research_card
-        png = await research_card.build(coin)
-        cap = f"<b>{coin} işlem öncesi araştırma</b> · 4K · {datetime.now(timezone.utc).strftime('%H:%M')} UTC\nKapalı 1s/4s mumlar, akış, karşı kanıt ve veri kapsamı."
-        await photo(chat, png, cap)
-        return await photo(chat, png, f"{coin}USDT · 3840×2160 PNG (tam çözünürlük)", document=True)
+        return await send_live_4k(chat, coin)
     if cmd == "/derinlik":
         coin = _args(rest, "24h")[0]
         d = await orderbook.latest(coin)
@@ -282,7 +330,7 @@ async def alerts_loop():
                     bucket = int(time.time()//900)
                     message = (f"<b>🗼 {r['coin']} likidasyon dalgası</b>\n"
                                f"5 dk gözlenen: {fmt.usd(r['usd'])} · Long {fmt.usd(r['long_usd'] or 0)}")
-                    await outbox.enqueue(conn, f"cascade:{r['coin']}:{bucket}", message)
+                    await outbox.enqueue(conn, f"cascade:{r['coin']}:{bucket}", message, coin=r["coin"])
 
 async def reports_loop():
     if not (config.TELEGRAM_BOT_TOKEN and config.TELEGRAM_CHAT_IDS and config.REPORT_HOURS_UTC): return
@@ -293,7 +341,8 @@ async def reports_loop():
         key = (now.date(), now.hour)
         if now.hour in config.REPORT_HOURS_UTC and now.minute < 5 and sent != key:
             try:
-                await outbox.broadcast(f"scheduled:{key}", intelligence.text(await intelligence.generate("BTC")), 3600)
+                message = "Zamanlı araştırma raporu" if config.TELEGRAM_CARD_ONLY else intelligence.text(await intelligence.generate("BTC"))
+                await outbox.broadcast(f"scheduled:{key}", message, 3600, coin="BTC")
                 sent = key
             except Exception as e: log.warning("rapor hatası: %s", e)
 
@@ -331,7 +380,7 @@ async def options_alerts():
                         notices.append(f"{e['expiry']} imzalı GEX tahmini: {fmt.usd(b)} → {fmt.usd(a)} / %1")
                 if notices:
                     message = f"<b>🗼 {coin} opsiyon alarmı · Deribit</b>\n" + "\n".join(notices)
-                    await outbox.enqueue(conn, f"options:{coin}:{rows[0]['ts'].isoformat()}", message, 2700)
+                    await outbox.enqueue(conn, f"options:{coin}:{rows[0]['ts'].isoformat()}", message, 2700, coin=coin)
         await asyncio.sleep(60)
 
 

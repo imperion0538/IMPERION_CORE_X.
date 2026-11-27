@@ -7,7 +7,7 @@ log = logging.getLogger("db")
 # Bu sürecin veritabanındaki kimliği. Yalnızca writer_lock tablosundaki kimlik yazabilir;
 # böylece kapanmamış eski dağıtımlar (ör. Railway'de "REMOVED" görünüp çalışmaya devam eden süreç) veri yazamaz.
 APP_NAME = f"md:{os.environ.get('RAILWAY_DEPLOYMENT_ID', socket.gethostname())[:40]}:{int(time.time())}:{os.urandom(4).hex()}"
-WRITE_TABLES = ("alert_outbox", "research_snapshots", "trade_write_batches", "liquidations", "trades_1m", "whale_trades", "deriv_snap", "options_snap", "telegram_deliveries", "depth_snap")
+WRITE_TABLES = ("alert_outbox", "research_snapshots", "trade_write_batches", "liquidations", "trades_1m", "whale_trades", "deriv_snap", "options_snap", "telegram_deliveries", "depth_snap", "macro_snap")
 
 GUARD = """
 CREATE TABLE IF NOT EXISTS writer_lock (id INT PRIMARY KEY DEFAULT 1, app TEXT NOT NULL, since TIMESTAMPTZ NOT NULL DEFAULT now(), CHECK (id = 1));
@@ -74,11 +74,13 @@ CREATE TABLE IF NOT EXISTS alert_outbox (
   id TEXT PRIMARY KEY, ts TIMESTAMPTZ NOT NULL DEFAULT now(), chat TEXT NOT NULL,
   body TEXT NOT NULL, expires TIMESTAMPTZ NOT NULL, delivered TIMESTAMPTZ,
   attempts INT NOT NULL DEFAULT 0, next_attempt TIMESTAMPTZ NOT NULL DEFAULT now());
+ALTER TABLE alert_outbox ADD COLUMN IF NOT EXISTS card_coin TEXT;
 CREATE INDEX IF NOT EXISTS alert_outbox_pending ON alert_outbox(next_attempt) WHERE delivered IS NULL;
 CREATE TABLE IF NOT EXISTS research_snapshots (
   coin TEXT NOT NULL, ts TIMESTAMPTZ NOT NULL, data JSONB NOT NULL, PRIMARY KEY(coin, ts));
+CREATE TABLE IF NOT EXISTS macro_snap (ts TIMESTAMPTZ PRIMARY KEY, data JSONB NOT NULL);
 """
-RETENTION = [("alert_outbox", 7), ("research_snapshots", 35), ("trade_write_batches", 2), ("depth_snap", 10), ("trades_1m", 35), ("whale_trades", 120), ("liquidations", 120), ("deriv_snap", 120), ("options_snap", 60)]
+RETENTION = [("alert_outbox", 7), ("research_snapshots", 35), ("trade_write_batches", 2), ("depth_snap", 10), ("trades_1m", 35), ("whale_trades", 120), ("liquidations", 120), ("deriv_snap", 120), ("options_snap", 60), ("macro_snap", 90)]
 pool: asyncpg.Pool | None = None
 
 DEDUPE_2026_11_27 = """

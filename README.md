@@ -40,12 +40,15 @@ Eski bir süreç kapanmadan çalışmaya devam ederse yazmaları reddedilir; yen
 | `TELEGRAM_BOT_TOKEN` | Bot token'ı |
 | `TELEGRAM_CHAT_ID` | Komut ve alarm alacak sohbet kimlikleri (virgülle) |
 | `COINS` | Varsayılan `BTC,ETH,SOL` |
-| `RAW_RETENTION_HOURS` | Ham olayların saklama süresi. Aralık 1–48 saat, varsayılan 6 saat |
+| `RAW_JOURNAL_TARGET_MIB` | Ham kayıtlar için varsayılan alan hedefi 24 MiB. Eski bölümler yoğunluk arttığında daha erken silinir. |
+| `RAW_RETENTION_HOURS` | Ham olayların saklama süresi. Aralık 15 dakika–48 saat, varsayılan 1 saat |
 | `WHALE_MIN_USD` | Balina eşiği, varsayılan 250000 (altcoinlerde ×0.4) |
 | `ALERT_LIQ_USD`, `ALERT_CASCADE_USD`, `ALERT_WHALE_USD` | Alarm eşikleri |
 | `REPORT_HOURS_UTC` | Zamanlı BTC raporu saatleri, örn. `5,13,21` |
 
 ## Web paneli
+
+`/panel/research` canlı veri kalitesi, emir defteri, ücretsiz piyasa kaynakları ve Türkçe 4K araştırma kartını ana panelden açar. `/api/forward-evidence` biriken araştırma özetlerinden geçmiş karşılaştırma sunar.
 `/panel` — fiyat, OI, funding, likidasyon, balina, CVD, Coinbase primi, emir defteri dengesizliği, opsiyon özetiyle
 tahmini likidasyon ısı haritası, emir defteri ısı haritası, CVD ve gerçekleşen likidasyon grafikleri. Görünür fiyat 3 sn, araştırma 15 sn, grafikler 60 sn aralıkla sorgulanır. Her veri sağlayıcısının kendi güncelleme sıklığı geçerlidir.
 
@@ -54,6 +57,11 @@ tahmini likidasyon ısı haritası, emir defteri ısı haritası, CVD ve gerçek
 `/api/research4k.png?coin=BTC` yeni araştırma kartını döndürür. `/api/card4k.png` mevcut teknik kartı, `/api/card.png` hızlı özeti sunar. `/api/risk?equity=10000&risk_pct=0.5&entry=60000&stop=59000&fee_bps=5&slippage_bps=5` girilen varsayımlarla pozisyon büyüklüğünü ve maliyeti hesaplar.
 
 `/health`, `/api/analysis?coin=BTC`, `/api/heatmap?coin=BTC&window=1h|4h|24h|7d|30d`, `/api/heatmap.png`, `/api/liquidations`, `/api/whales`, `/api/derivatives`, `/api/options`, `/api/alts`, `/api/cvd`.
+
+Yeni araştırma uçları:
+- `/api/research?coin=BTC` — 4 ajanlı orkestrasyon (structure, flow, macro, synthesis) + skorlar
+- `/api/macro` — DXY, 10Y, SPX son gözlem
+- `/api/scores?coin=BTC` — yön bias + cascade heuristic skorlar
 
 Emir defteri ve grafikler: `/api/depth?coin=BTC` (bantlar, dengesizlik, duvarlar), `/api/orderbook.png?coin=BTC&hours=4`,
 `/api/cvd.png?coin=BTC&hours=24`, `/api/liquidations.png?coin=BTC&window=24h`, `/api/card.png?coin=BTC` (canlı analiz kartı), `/api/coins`.
@@ -64,6 +72,8 @@ Emir defteri ve grafikler: `/api/depth?coin=BTC` (bantlar, dengesizlik, duvarlar
 `/derinlik [COIN]` — emir defteri derinliği ve duvarlar · `/defter [COIN] [1s|4s|24s]` — emir defteri ısı haritası ·
 `/cvd [COIN] [4s|24s|7g]` — spot/perp CVD grafiği · `/durum` — akış sağlığı.
 
+Yeni araştırma komutları: `/arastirma [COIN]`, `/senaryo [COIN]`, `/makro`, `/skor [COIN]`.
+
 ## Geliştirme
 ```
 cd marketdata
@@ -73,6 +83,16 @@ python -m pytest -q            # TEST_DATABASE_URL verilirse veritabanı kilidi 
 GitHub Actions her push ve PR'da testleri PostgreSQL 16 ile çalıştırır.
 
 Isı haritası tahmini bir modeldir; veriler yatırım tavsiyesi değildir.
+
+### İleri düzey piyasa araştırma katmanı (yeni)
+
+- **Makro veri** (`md/macro.py`): DXY, US 10Y, SPX saatlik poll. `macro_snap` tablosu. Status: observed / insufficient_data.
+- **Araştırma orkestratörü** (`md/research.py`): Market Structure, Flow & Liquidity, Macro & Sentiment, Synthesis ajanları mevcut analiz + makro üzerinden çalışır. Yapılandırılmış JSON + Türkçe özet.
+- **Skorlama** (`md/scoring.py`): Yön bias (-100..+100) ve cascade stress heuristic. Feature extraction (OI change, funding, Coinbase premium vb.).
+- Yeni API: `/api/research`, `/api/macro`, `/api/scores`.
+- Telegram: `/arastirma`, `/senaryo`, `/makro`, `/skor`.
+
+On-chain, haber/sentiment ve ML modelleri gelecek entegrasyonlar olarak planlanmıştır. Mevcut sistem gözlenen veriden üretilir; sentetik veri yok.
 
 ### Büyük işlem akışı ve fiyat tepkisi
 
@@ -118,3 +138,19 @@ fiyat tepkileriyle sunar. Rapor, veri kapsamı ile kaynak durumunu da içerir.
 Telegram'da `/arastirma BTC` tüm katmanları birleştiren güncel değerlendirmeyi, `/akis BTC 15m` işlem ayrıntılarını sunar.
 4K kartın teknik yapısı kapanmış mumlardan hesaplanır. Opsiyon API'si
 son kayıt saatini ve 30 dakikayı aşan kayıtlar için eskime durumunu gösterir.
+
+### Advanced research (production integration)
+
+The original Advanced V2 prototype is superseded by the existing Railway single-writer architecture. No synthetic price/OI/funding/flow is injected into production. Redis/NATS/TimescaleDB and the standalone prototype dashboard are not required or deployed; PostgreSQL and the existing web panel remain authoritative.
+
+- `/api/advanced?coin=BTC`: observed per-source closed five-minute flow anomaly z-scores, explicitly heuristic cascade stress estimate (coverage-gated), and Deribit options premium flow.
+- `/api/options/flow?coin=BTC`: BTC/ETH inverse options premium flow over the last 15 minutes. Capped responses and invalid records are marked partial; unavailable is not zero. Put/call premium ratio differs from OI ratio.
+- `TELEGRAM_CARD_ONLY=1` (default): original 4K design, full-resolution PNG document only. /kart, /btc, /eth, /sol, /analiz and /kart arsiv; other analysis remains available via HTTP API. Scheduled reports and rate-limited alerts send 4K documents. Set 0 only to restore legacy text and summary commands.
+- No live order execution or automatic position opening is added. On-chain data and independent durable event streaming remain future integrations, not advertised as live.
+
+### IMPERION CORE X interactive command center
+
+`/panel` is the responsive 4K-capable HTML/CSS dashboard with an animated projected 3D torus/coin, real candle chart, observed CVD, liquidity estimates, orderbook walls, derivatives, Deribit options, whale prints, anomaly and coverage, correlation, health, and original 4K card. No invented trade signals or PnL. `/panel/classic` retains the previous panel. `/api/candles?coin=BTC&frame=15m` accepts monitored coins and 15m/1h/4h. Dashboard polls real APIs every 30s, health every 10s; API key remains in page memory only. 3D geometry is decorative, not an AI model. Fullscreen adapts to the display; the original analysis card is 3840×2160.
+
+### Reference-layout command center
+The /panel interface follows the supplied 16:9 reference's four instrument banks and lower analysis panels; responsive stacking on smaller screens. The animated engraved coin and reactor are procedurally drawn, not a flat image of fictional prices. Market sentiment is observed aggressor volume share. Trade feed is limited to recorded whale prints; AI signal/portfolio execution remains unavailable. No fake values are embedded.

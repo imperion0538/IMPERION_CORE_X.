@@ -130,7 +130,8 @@ async def persist(events):
             if alert and config.ALERTS_ENABLED:
                 text = (f"<b>🗼 {e['coin']} · {e['venue']}</b>\n{label}: {fmt.usd(e['usd'])} @ ${e['price']:,.2f}"
                         f"\n{e['ts'].strftime('%H:%M:%S')} UTC · Gözlenen işlem; hesap sahibinin kimliği bilinmez.")
-                await outbox.enqueue(conn, e["id"], text)
+                key = f"flow:{e['coin']}:{int(e['ts'].timestamp())//900}" if config.TELEGRAM_CARD_ONLY else e["id"]
+                await outbox.enqueue(conn, key, text, coin=e["coin"])
     _partition_cache.update(starts)  # Only cache partition creation after commit.
     quality.counters["expired_before_commit"] += len(events) - len(admitted)
     quality.counters["persisted_events"] += len(inserted)

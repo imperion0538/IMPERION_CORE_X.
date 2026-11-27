@@ -1,7 +1,7 @@
 """Periyodik REST toplayıcılar: OI, funding, long/short, opsiyonlar; dakikalık kovaları veritabanına yazar."""
 import asyncio, collections, json, logging, time
 from datetime import datetime, timezone
-from . import config, db, http, option_metrics, state
+from . import config, db, http, option_metrics, state, macro
 
 log = logging.getLogger("rest")
 UTC = timezone.utc
@@ -171,4 +171,4 @@ async def daily_cleanup():
         await _safe("cleanup", db.cleanup())
         await asyncio.sleep(86400)
 
-ALL = [poll_snapshots, poll_options, daily_cleanup]
+ALL = [poll_snapshots, poll_options, daily_cleanup, macro.poll_macro]
