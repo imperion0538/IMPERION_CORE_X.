@@ -48,7 +48,7 @@ async def handle(chat, text):
         coin, w = _args(rest, "24h")
         h = await heatmap.model(coin, w)
         cap = f"<b>{coin} tahmini likidasyon ısı haritası · {w}</b>\n" + "\n".join(
-            f"{'🔴 Long' if c['side']=='long' else '🟢 Short'} ${c['price']:,.0f} ({c['dist_pct']:+.1f}%) {fmt.usd(c['usd'])}" for c in sorted(h["clusters"], key=lambda c: -c["price"]))
+            f"{'🚫 Long' if c['side']=='long' else '💸 Short'} ${c['price']:,.0f} ({c['dist_pct']:+.1f}%) {fmt.usd(c['usd'])}" for c in sorted(h["clusters"], key=lambda c: -c["price"]))
         return await photo(chat, charts.heatmap_png(h, f"{coin} tahmini likidasyon haritası · {w} · {h['generated_utc']} UTC"), cap)
     if cmd == "/likidasyon":
         coin, w = _args(rest, "24h")
@@ -81,7 +81,7 @@ async def handle(chat, text):
         b, s_ = a.get("buy"), a.get("sell")
         L = [f"<b>{coin} balina işlemleri · {w}{fmt.coverage_note(secs)}</b> (eşik {fmt.usd(config.whale_threshold(coin))})",
              f"Alım {fmt.usd(b['u'] if b else 0)} ({b['n'] if b else 0}) · Satım {fmt.usd(s_['u'] if s_ else 0)} ({s_['n'] if s_ else 0}) · Net {fmt.usd((b['u'] if b else 0) - (s_['u'] if s_ else 0))}", ""]
-        L += [f"{'🟢' if r['side']=='buy' else '🔴'} {r['ts'].strftime('%H:%M')} {r['venue']} {r['market']} {fmt.usd(r['usd'])} @ ${r['price']:,.0f}" for r in rows]
+        L += [f"{'💸' if r['side']=='buy' else '🚫'} {r['ts'].strftime('%H:%M')} {r['venue']} {r['market']} {fmt.usd(r['usd'])} @ ${r['price']:,.0f}" for r in rows]
         return await send(chat, "\n".join(L))
     if cmd in ("/oi", "/ls"):
         coin = _args(rest, "24h")[0]
@@ -165,10 +165,10 @@ async def alerts_loop():
                 lg = sum(u for t, cc, u, sd in state.recent_liq if cc == c and now - t < 300 and sd == "long")
                 items.append({"type": "cascade", "coin": c, "usd": tot, "long": lg, "short": tot - lg})
         if not items: continue
-        L = ["<b>⚡ Alarm</b>"]
+        L = ["<b>🗼 Alarm</b>"]
         for a in items[:20]:
             if a["type"] == "liq":
-                L.append(f"{'🔴' if a['side']=='long' else '🟢'} {a['coin']} {a['venue']} {a['side']} likidasyonu {fmt.usd(a['usd'])} @ ${a['price']:,.0f}")
+                L.append(f"{'🚫' if a['side']=='long' else '💸'} {a['coin']} {a['venue']} {a['side']} likidasyonu {fmt.usd(a['usd'])} @ ${a['price']:,.0f}")
             elif a["type"] == "whale":
                 L.append(f"🐋 {a['coin']} {a['venue']} {a['market']} {'alım' if a['side']=='buy' else 'satım'} {fmt.usd(a['usd'])} @ ${a['price']:,.0f}")
             else:
