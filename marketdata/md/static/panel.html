@@ -2,125 +2,93 @@
 <html lang="tr">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>IMPERION Market Data</title>
+<meta name="color-scheme" content="dark"><title>IMPERION CORE X | Market Intelligence</title>
 <style>
-  :root { --bg:#0f1419; --panel:#161c24; --line:#252c36; --fg:#e6e9ef; --muted:#8b95a7; --up:#26a69a; --down:#ef5350; }
-  * { box-sizing:border-box }
-  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif }
-  .wrap { max-width:1400px; margin:0 auto; padding:16px }
-  header { display:flex; flex-wrap:wrap; gap:12px; align-items:baseline; justify-content:space-between }
-  h1 { margin:0; font-size:22px }
-  .price { font-size:30px; font-variant-numeric:tabular-nums }
-  .muted { color:var(--muted) }
-  .chg span { margin-right:12px; font-variant-numeric:tabular-nums }
-  .up { color:var(--up) } .down { color:var(--down) }
-  select, button { background:var(--panel); color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:6px 10px; font:inherit }
-  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px; margin:16px 0 }
-  .tile { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px; min-width:0 }
-  .tile .k { color:var(--muted); font-size:12px }
-  .tile .v { font-size:18px; margin-top:4px; font-variant-numeric:tabular-nums }
-  .charts { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(420px,100%),1fr)); gap:12px; margin-top:12px }
-  .charts figure { margin:0; background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:8px; min-width:0 }
-  .charts img { width:100%; display:block; border-radius:4px }
-  figcaption { color:var(--muted); font-size:12px; padding:6px 4px 0 }
-  ul { padding-left:18px; margin:6px 0 0 } li { margin:2px 0 }
+:root{color-scheme:dark;--bg:#040709;--panel:#0a1116;--line:#334047;--ink:#e9f2f3;--muted:#8fa4ad;--green:#39f9a0;--red:#ff4759;--amber:#f9c86b;--cyan:#66d8f4;--unit:clamp(12px,.66vw,23px)}
+*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:radial-gradient(ellipse at 45% 0,#20282e 0,transparent 37%),#040709;color:var(--ink);font:var(--unit)/1.45 system-ui,sans-serif;font-variant-numeric:tabular-nums}button,select,input{font:inherit;color:inherit;background:#101a20;border:1px solid #34474e;border-radius:6px;padding:.48em .72em}button{cursor:pointer}button:hover,button:focus-visible,select:focus-visible{border-color:var(--green);outline:2px solid #39f9a055}a{color:var(--cyan);text-decoration:none}button[disabled]{opacity:.5;cursor:default}
+.shell{display:grid;grid-template-columns:clamp(136px,10vw,260px) minmax(0,1fr);min-height:100vh}.rail{position:sticky;top:0;height:100vh;overflow:auto;border-right:1px solid #4d333a;background:linear-gradient(170deg,#10171c,#05080a 70%);padding:1em .65em;display:flex;flex-direction:column;gap:.9em}.mark{text-align:center;line-height:1.1;font-weight:900;letter-spacing:.08em}.mark svg{width:3.5em;height:2em;display:block;margin:auto;filter:drop-shadow(0 0 8px #ff465d)}.mark b{color:var(--red)}.nav{display:grid;gap:.25em}.nav a{color:var(--muted);padding:.65em .55em;border-left:2px solid transparent;font-weight:650}.nav a:hover,.nav a:focus{color:white;border-color:var(--red);background:#ff475914}.rail footer{margin-top:auto;color:var(--muted);font-size:.8em}.dot{display:inline-block;width:.62em;height:.62em;border-radius:50%;background:var(--amber);margin-right:.4em}.dot.ok{background:var(--green);box-shadow:0 0 .65em #39f9a0}.dot.bad{background:var(--red)}
+main{min-width:0;padding:0 .8em 1em}.brand{position:relative;isolation:isolate;min-height:7em;display:flex;align-items:center;justify-content:center;overflow:hidden;border-bottom:1px solid #70424b;background:radial-gradient(ellipse at 18% 100%,#00c77724,transparent 35%),radial-gradient(ellipse at 85% 100%,#ff193b2b,transparent 35%),repeating-linear-gradient(125deg,transparent 0 2.2em,#64767b0c 2.2em 2.25em)}.brand:after{position:absolute;inset:auto 0 0;height:2px;background:linear-gradient(90deg,var(--green),#e7e7e7,var(--red));box-shadow:0 0 1em #ff4759;content:""}.wordmark{text-align:center;z-index:2;padding:.8em 0}.wordmark h1{font-size:clamp(26px,3.3vw,110px);line-height:1.05;letter-spacing:.06em;font-weight:950;margin:0;background:linear-gradient(#fff 0,#98a5aa 48%,#fff 52%,#667980);color:transparent;background-clip:text}.wordmark h1 span{color:#ff5363;text-shadow:0 0 .7em #ff334870}.wordmark small{letter-spacing:.4em;color:#c0cbd0;font-weight:700}.beast{position:absolute;top:0;height:100%;width:23%;opacity:.8;filter:drop-shadow(0 0 10px currentColor)}.bull{left:1%;color:var(--green)}.bear{right:1%;color:var(--red)}
+.toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:.5em;padding:.7em 0}.toolbar .status{margin-right:auto;font-weight:700}.muted{color:var(--muted)}.green{color:var(--green)}.red{color:var(--red)}.amber{color:var(--amber)}.ticker{display:flex;gap:1.2em;overflow:auto;white-space:nowrap;border:1px solid #2b3d43;padding:.55em .8em;background:#0b1217;margin-bottom:.75em}.ticker span{font-weight:650}
+.grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:.65em;align-items:stretch}.panel{position:relative;min-width:0;overflow:hidden;background:linear-gradient(150deg,#111b20,#080e12 68%);border:1px solid #39464d;border-radius:9px;box-shadow:inset 0 1px #9bb6c51a,0 2px 16px #000a;padding:.8em;scroll-margin-top:1em}.panel:before{content:"";position:absolute;left:0;right:0;top:0;height:1px;background:linear-gradient(90deg,transparent,#77ffb68c,transparent,#ff47595c,transparent);pointer-events:none}.panel h2{font-size:1em;line-height:1.3;letter-spacing:.075em;text-transform:uppercase;margin:0 0 .65em;color:#dce9ed;display:flex;justify-content:space-between;gap:.5em;align-items:center}.panel h2 button{padding:.15em .42em;font-size:.82em}.panel h3{font-size:.84em;color:var(--muted);margin:.4em 0}.span3{grid-column:span 3}.span4{grid-column:span 4}.span5{grid-column:span 5}.span6{grid-column:span 6}.span7{grid-column:span 7}.span12{grid-column:span 12}.stack{display:grid;gap:.65em;min-width:0}.stack>.panel{height:100%}.big{font-size:clamp(26px,2.6vw,90px);font-weight:800;line-height:1.1;letter-spacing:-.04em}.metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.45em;margin:.55em 0}.metric{padding:.48em;background:#111c21a0;border:1px solid #ffffff09;border-radius:4px;min-width:0}.metric span{display:block;color:var(--muted);font-size:.75em}.metric b{display:block;font-size:1.12em;overflow-wrap:anywhere}.rowline{display:flex;justify-content:space-between;gap:.6em;padding:.35em 0;border-bottom:1px solid #ffffff09}.rowline span:last-child{text-align:right}.bar{display:flex;height:.52em;overflow:hidden;border-radius:3px;background:#253139;margin:.5em 0}.bar i{display:block;background:var(--green)}.bar i+ i{background:var(--red)}.scroll{overflow:auto;max-height:18em}table{border-collapse:collapse;width:100%;font-size:.85em;text-align:right;white-space:nowrap}th,td{padding:.42em .3em;border-bottom:1px solid #ffffff0d}th{color:var(--muted);font-size:.88em;position:sticky;top:0;background:#111a1e}td:first-child,th:first-child{text-align:left}table td{overflow:hidden;text-overflow:ellipsis;max-width:18em}.chart{display:block;width:100%;height:clamp(155px,15vw,590px)}.mini{height:clamp(110px,9vw,340px)}.core{display:flex;flex-direction:column;min-height:23em;background:radial-gradient(ellipse at center,#17342a 0,#0a1218 42%,#030507 72%);isolation:isolate}.core canvas{flex:1;min-height:19em;width:100%;height:100%;display:block;touch-action:pan-y}.core .corefoot{display:flex;justify-content:space-between;align-items:center;gap:.5em;font-size:.8em}.core h2{position:relative;z-index:1}.gauge{display:grid;place-items:center;position:relative;width:min(9em,100%);aspect-ratio:1;margin:.5em auto;border-radius:50%;background:conic-gradient(var(--amber) var(--arc,0%),#263239 0)}.gauge:before{content:"";position:absolute;inset:.65em;background:#0b1216;border-radius:50%}.gauge div{z-index:1;text-align:center}.gauge b{display:block;font-size:2em}.gauge small{color:var(--muted)}.note{font-size:.78em;color:var(--muted);margin:.5em 0 0}.empty{color:var(--muted);padding:.7em;text-align:center}details{margin-top:.4em}summary{cursor:pointer;color:var(--cyan)}pre{white-space:pre-wrap;overflow:auto;max-height:23em;font-size:.8em;color:#b5c6cd}.warning{border-color:#b58c465e}.panel:fullscreen{padding:2em;background:#080e12;overflow:auto}.panel:fullscreen .chart{height:75vh}.panel:fullscreen canvas{max-height:85vh}.panel:fullscreen .scroll{max-height:75vh}#card-image{width:100%;height:auto;display:none}.footer{padding:1em .1em;color:var(--muted);font-size:.8em}
+@media(min-width:2400px){.grid{gap:1em}.panel{padding:1em}.brand{min-height:8em}.core{min-height:25em}.scroll{max-height:20em}}
+@media(max-width:1250px){.shell{grid-template-columns:114px minmax(0,1fr)}.span3,.span4,.span5,.span7{grid-column:span 6}.core{grid-column:span 6}.rail{font-size:11px}.grid{gap:.55em}}
+@media(max-width:760px){.shell{display:block}.rail{position:static;height:auto;display:block;padding:.5em}.rail .mark,.rail footer{display:none}.nav{display:flex;overflow:auto;white-space:nowrap}.nav a{font-size:12px}.grid>*,.core{grid-column:span 12}.brand{min-height:5.5em}.wordmark small{font-size:9px}.toolbar{gap:.4em}.toolbar .status{width:100%}.chart{height:220px}.core{min-height:320px}.core canvas{min-height:260px}.beast{opacity:.4}.grid{gap:.7em}}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
 </style>
 </head>
-<body><div class="wrap">
-<header>
-  <div><h1>IMPERION Market Data</h1><div class="muted" id="ts">yükleniyor…</div></div>
-  <div>
-    <select id="coin" aria-label="Coin"></select>
-    <select id="win" aria-label="Zaman aralığı"><option value="1h">1s</option><option value="4h">4s</option><option value="24h" selected>24s</option><option value="7d">7g</option><option value="30d">30g</option></select>
-    <button id="refresh" type="button">Yenile</button>
-  </div>
-</header>
-<div><span class="price" id="price">—</span> <span class="chg" id="chg"></span></div>
-<div class="grid" id="tiles"></div>
-<div class="tile"><div class="k">Özet</div><ul id="summary"></ul></div>
-<div class="charts">
-  <figure><img id="img-heat" alt="Tahmini likidasyon ısı haritası"><figcaption>Tahmini likidasyon ısı haritası (Binance + Bybit + OKX OI modeli)</figcaption></figure>
-  <figure><img id="img-ob" alt="Emir defteri ısı haritası"><figcaption>Emir defteri ısı haritası, son 4 saat</figcaption></figure>
-  <figure><img id="img-cvd" alt="CVD grafiği"><figcaption>Spot ve perp CVD, son 24 saat</figcaption></figure>
-  <figure><img id="img-liq" alt="Gerçekleşen likidasyonlar"><figcaption>Gerçekleşen likidasyonlar</figcaption></figure>
-</div>
-<p class="muted">Veriler bilgilendirme amaçlıdır, yatırım tavsiyesi değildir. Sayfa 60 saniyede bir yenilenir.</p>
-</div>
+<body>
+<div class="shell"><aside class="rail"><div class="mark"><svg viewBox="0 0 100 60" fill="none" stroke="currentColor" style="color:#ff4759" stroke-width="4"><path d="M8 18L29 33L50 5L71 33L92 18L80 50H20Z"/><path d="M22 57H78"/></svg>IMPERION<br><b>CORE X</b></div>
+<nav class="nav" aria-label="Bölümler"><a href="#overview">◈ Genel bakış</a><a href="#core">◎ 3D çekirdek</a><a href="#pricechart">▥ Fiyat</a><a href="#depth">▤ Emir defteri</a><a href="#flow">⇄ Order Flow</a><a href="#liquidation">▦ Likidasyon</a><a href="#derivatives">◇ Türevler</a><a href="#options">◉ Opsiyonlar</a><a href="#whales">≋ Büyük işlemler</a><a href="#risk">⚡ Risk / anomali</a><a href="#structure">⌁ Teknik yapı</a><a href="#correlation">▧ Korelasyon</a><a href="#health">● Sistem sağlığı</a><a href="#report">▣ 4K kart</a></nav>
+<footer>MARKET INTELLIGENCE<br><span id="railstatus">Bağlantı bekleniyor</span><br><br><a href="/panel/classic">Klasik panel</a><br><span>Salt okunur • emir kapalı</span></footer></aside>
+<main><header class="brand">
+<svg class="beast bull" viewBox="0 0 250 120" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 94Q25 58 57 57L81 44Q62 15 91 9L110 40Q138 30 164 49Q192 21 214 17Q210 45 188 59L171 89L139 103L99 94L77 112L56 89L27 110Z"/><path d="M81 44L101 73L139 103L146 68L164 49M57 57L99 94L110 40L146 68L171 89M27 110L81 44M139 103L188 59"/><path d="M105 61L119 65L108 70M154 62L169 61L156 70" stroke-width="4"/></svg>
+<div class="wordmark"><h1>IMPERION <span>CORE</span></h1><small>MARKET INTELLIGENCE • X</small></div>
+<svg class="beast bear" viewBox="0 0 250 120" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 92L32 49Q38 21 61 35Q92 17 125 35Q149 9 165 38L202 53L225 78L203 101L171 100L142 113L107 91L76 107L42 90Z"/><path d="M32 49L76 107L92 45L142 113L125 35L171 100L165 38L203 101L202 53M92 45L125 35M107 91L171 100M42 90L92 45"/><path d="M145 62L158 66L146 72M184 67L198 70L187 76M190 87L204 89" stroke-width="4"/></svg>
+</header><div class="toolbar"><div class="status" id="connection"><span class="dot"></span>Veri bekleniyor</div><span id="clock" class="muted">— UTC</span><select id="coin" aria-label="Varlık"></select><select id="frame" aria-label="Mum aralığı"><option value="15m">15 dk</option><option value="1h">1 sa</option><option value="4h">4 sa</option></select><select id="window" aria-label="Analiz aralığı"><option value="1h">1 sa</option><option value="4h" selected>4 sa</option><option value="24h">24 sa</option></select><button id="refresh">Yenile</button><button id="full">⛶ Tam ekran / 4K</button><button id="key">API anahtarı</button></div>
+<div class="ticker" id="ticker">İzlenen kaynaklar yükleniyor…</div>
+<div class="grid">
+<section class="stack span3" id="overview"><article class="panel"><h2>◈ Piyasa fiyatı <small id="symbol">—</small></h2><div class="big" id="price">—</div><div id="changes" class="metrics"></div><div id="overviewMetrics" class="metrics"></div><p class="note" id="stamp">Veri bekleniyor</p></article><article class="panel"><h2>◉ Agresif alış / satış</h2><div id="sentiment"></div><div class="bar" id="sentbar"></div><p class="note">Gözlenen işlem hacmi; yön tahmini veya yatırımcı duyarlılığı anketi değildir.</p></article></section>
+<section class="panel core span4" id="core"><h2>◎ 3D MARKET CORE <button id="pause" aria-pressed="false">Duraklat</button></h2><canvas id="torus" aria-label="Dönen üç boyutlu veri ağı"></canvas><div class="corefoot"><span id="corelabel">3D görsel simülasyon • canlı veriden bağımsız geometri</span><span class="muted">Sürükle ↔</span></div></section>
+<section class="stack span5"><article class="panel" id="pricechart"><h2>▥ Fiyat grafiği <button data-full>⛶</button></h2><canvas class="chart" id="candles" aria-label="Fiyat mumları"></canvas><div class="note" id="candleinfo">Binance USD-M • kapanmamış mum işaretli</div></article><article class="panel" id="liquidation"><h2>▦ Tahmini likidasyon kümeleri <button data-full>⛶</button></h2><canvas class="chart mini" id="heatcanvas" aria-label="Fiyata göre tahmini likidasyon yoğunluğu"></canvas><p class="note" id="heatnote">Model tahmini, borsaların gerçek açık pozisyon haritası değildir.</p></article></section>
+<section class="panel span3" id="depth"><h2>▤ Emir defteri <button data-full>⛶</button></h2><div id="depthmetrics" class="metrics"></div><div class="scroll" id="walls"></div><p class="note" id="depthnote">Birleştirilmiş fiyat kovaları / en büyük duvarlar; emir seviyeleri değildir.</p></section>
+<section class="panel span3" id="derivatives"><h2>◇ Türevler / Funding <button data-full>⛶</button></h2><div id="dermetrics" class="metrics"></div><div id="venues" class="scroll"></div></section>
+<section class="panel span3" id="options"><h2>◉ Deribit opsiyonları <button data-full>⛶</button></h2><div id="optionmetrics" class="metrics"></div><div class="bar" id="optionbar"></div><div id="expiries" class="scroll"></div><div class="note" id="optionnote"></div></section>
+<section class="panel span3" id="risk"><h2>⚡ Kaskad stres endeksi <button data-full>⛶</button></h2><div class="gauge" id="gauge"><div><b id="score">—</b><small>/ 100</small></div></div><div id="riskmetrics"></div><p class="note">Sezgisel model; olasılık veya portföy risk skoru değildir.</p></section>
+<section class="panel span4" id="flow"><h2>⇄ Spot / Perp CVD <button data-full>⛶</button></h2><canvas id="cvdchart" class="chart" aria-label="Kümülatif gözlenen hacim farkı"></canvas><div id="flowmetrics" class="metrics"></div><p class="note">Yeşil: spot · mavi: perp. Yalnız kaydedilen işlemler.</p></section>
+<section class="panel span4" id="whales"><h2>≋ Büyük işlemler / Balina akışı <button data-full>⛶</button></h2><div id="whalemetrics" class="metrics"></div><div id="whaletable" class="scroll"></div><p class="note">Gözlenen agresif işlemler; zincir üstü cüzdan transferi değildir.</p></section>
+<section class="panel span4" id="anomaly"><h2>⚡ Akış anomalileri <button data-full>⛶</button></h2><div id="anomalies" class="scroll"></div><div id="coverage" class="scroll"></div><p class="note">Kapanmış 5 dk kovaları / gözlenen veri kapsamı.</p></section>
+<section class="panel span4" id="structure"><h2>⌁ 4H → 1H → 15m teknik yapı <button data-full>⛶</button></h2><div id="structuretable" class="scroll"></div><p class="note">Kapanmış mum verisi; onaylı işlem sinyali veya başarı olasılığı değildir.</p></section>
+<section class="panel span4" id="correlation"><h2>▧ Altcoin korelasyonu / 7 gün <button data-full>⛶</button></h2><div id="corrtable" class="scroll"></div><p class="note">BTC / seçilen baz varlığa göre saatlik getiri korelasyonu.</p></section>
+<section class="panel span4" id="health"><h2>● Kaynak / sistem sağlığı <button data-full>⛶</button></h2><div id="healthtable" class="scroll"></div><div id="liquidmetrics" class="metrics"></div><p class="note">Bağlantı, son mesaj yaşı ve yeniden bağlanma sayısı.</p></section>
+<section class="panel span7" id="report"><h2>▣ Analiz özeti <button data-full>⛶</button></h2><div id="summary"></div><div id="sources" class="metrics"></div><button id="card">Canlı 3840 × 2160 kartı aç</button><p class="note" id="cardstatus">Mevcut orijinal teknik analiz kartı; tasarımı değiştirilmedi.</p><img id="card-image" alt="Canlı 4K analiz kartı"></section>
+<section class="panel span5"><h2>◈ Veri merkezi / erişim</h2><div id="availability"></div><p class="note">Canlı emir, portföy PnL, on-chain akış ve kalibre edilmiş AI sinyalleri bu serviste mevcut değil. Yapay değer üretilmez.</p><details><summary>Ham API verilerini göster</summary><pre id="raw">—</pre></details><div class="note">Gerçekleşen likidasyon, defter ve diğer grafikler:</div><div class="toolbar"><button data-image="orderbook.png">Defter haritası</button><button data-image="heatmap.png">Likidasyon modeli</button><button data-image="liquidations.png">Gerçekleşen</button><button data-image="cvd.png">CVD</button></div></section>
+</div><footer class="footer">IMPERION CORE X · 4K uyumlu akışkan arayüz · 30 sn veri yenileme / 10 sn sağlık · 3D dekoratif simülasyon · Yatırım tavsiyesi değildir.</footer></main></div>
 <script>
-const $ = (id) => document.getElementById(id);
-function usd(v) {
-  if (v === null || v === undefined || isNaN(v)) return "—";
-  const a = Math.abs(v), s = v < 0 ? "-" : "";
-  if (a >= 1e9) return s + "$" + (a / 1e9).toFixed(2) + "B";
-  if (a >= 1e6) return s + "$" + (a / 1e6).toFixed(1) + "M";
-  if (a >= 1e3) return s + "$" + (a / 1e3).toFixed(0) + "K";
-  return s + "$" + a.toFixed(0);
-}
-function pct(v, d) { if (v === null || v === undefined) return "—"; return (v > 0 ? "+" : "") + v.toFixed(d === undefined ? 2 : d) + "%"; }
-function cls(v) { return (v || 0) >= 0 ? "up" : "down"; }
-function tile(k, v, c) {
-  const d = document.createElement("div"); d.className = "tile";
-  const a = document.createElement("div"); a.className = "k"; a.textContent = k;
-  const b = document.createElement("div"); b.className = "v" + (c ? " " + c : ""); b.textContent = v;
-  d.append(a, b); return d;
-}
-async function load() {
-  const coin = $("coin").value || "BTC", win = $("win").value, t = Date.now();
-  $("img-heat").src = "api/heatmap.png?coin=" + coin + "&window=" + win + "&t=" + t;
-  $("img-ob").src = "api/orderbook.png?coin=" + coin + "&hours=4&t=" + t;
-  $("img-cvd").src = "api/cvd.png?coin=" + coin + "&hours=24&t=" + t;
-  $("img-liq").src = "api/liquidations.png?coin=" + coin + "&window=" + win + "&t=" + t;
-  try {
-    const [a, report] = await Promise.all([
-      fetch("api/analysis?coin=" + coin).then(r => r.json()),
-      fetch("api/report?coin=" + coin).then(r => r.ok ? r.json() : null).catch(() => null),
-    ]);
-    $("ts").textContent = a.generated_utc + " UTC";
-    $("price").textContent = "$" + a.price.toLocaleString("en-US", { maximumFractionDigits: 2 });
-    const pc = a.price_change_pct;
-    $("chg").replaceChildren(...["1h", "4h", "24h"].map((w) => { const s = document.createElement("span"); s.className = cls(pc[w]); s.textContent = w + " " + pct(pc[w]); return s; }));
-    const d = a.derivatives, f = a.flows["4h"], ob = a.orderbook;
-    const spot = f.cvd.spot ? f.cvd.spot.delta : null, perp = f.cvd.perp ? f.cvd.perp.delta : null;
-    const tiles = [
-      tile("Toplam OI", usd(d.oi_total_usd)),
-      tile("OI 4s değişim", pct(d.oi_change_pct["4h"]), cls(d.oi_change_pct["4h"])),
-      tile("Funding yıllık", pct(d.funding_ann_pct, 1)),
-      tile("Likidasyon 4s (L / S)", usd(f.liquidations.long) + " / " + usd(f.liquidations.short)),
-      tile("Balina net 4s", usd(f.whales.net_usd), cls(f.whales.net_usd)),
-      tile("Spot CVD 4s", usd(spot), cls(spot)),
-      tile("Perp CVD 4s", usd(perp), cls(perp)),
-      tile("Coinbase primi", pct(a.coinbase_premium_pct, 3), cls(a.coinbase_premium_pct)),
-    ];
-    if (ob) tiles.push(tile("Defter ±%1 dengesizlik", ob.bands["1"].imbalance.toFixed(2), cls(ob.bands["1"].imbalance)));
-    if (a.options && a.options.expiries && a.options.expiries.length) {
-      const e = a.options.expiries[0];
-      tiles.push(tile("Max pain " + e.expiry, "$" + e.max_pain.toLocaleString("en-US")));
-    }
-    const flow = report?.whale_liquidity;
-    if (flow) {
-      tiles.push(tile("15 dk büyük işlem, spot / perp", usd(flow.by_market.spot.net_usd) + " / " + usd(flow.by_market.perp.net_usd)));
-      const c = flow.coverage;
-      const best = Math.max(0, ...c.sources.map(s => s.observed_minutes));
-      tiles.push(tile("15 dk akış kapsamı", best + "/" + c.expected_minutes + " dk · " + c.sources.length + " kaynak"));
-    }
-    $("tiles").replaceChildren(...tiles);
-    $("summary").replaceChildren(...a.summary.map((s) => { const li = document.createElement("li"); li.textContent = s; return li; }));
-  } catch (e) {
-    $("ts").textContent = "Veri alınamadı: " + e.message;
-  }
-}
-(async () => {
-  try {
-    const c = await (await fetch("api/coins")).json();
-    $("coin").replaceChildren(...c.coins.map((x) => new Option(x, x)));
-  } catch (e) {
-    $("coin").replaceChildren(new Option("BTC", "BTC"));
-  }
-  $("coin").addEventListener("change", load);
-  $("win").addEventListener("change", load);
-  $("refresh").addEventListener("click", load);
-  load();
-  setInterval(load, 60000);
-})();
-</script>
-</body></html>
+'use strict';
+const $=id=>document.getElementById(id), num=v=>typeof v==='number'&&Number.isFinite(v), fmt=(v,d=2)=>num(v)?v.toLocaleString('en-US',{maximumFractionDigits:d}):'—', usd=v=>num(v)?(v<0?'−':'')+'$'+Intl.NumberFormat('en-US',{notation:Math.abs(v)>=1e6?'compact':'standard',maximumFractionDigits:2}).format(Math.abs(v)):'—', pct=v=>num(v)?(v>0?'+':'')+fmt(v,3)+'%':'—', tone=v=>!num(v)?'muted':v<0?'red':'green';
+let key='', seq=0, busy=false, pending=false, snapshot={}, selected='BTC', frame='15m', win='4h', cardUrl=null;
+const div=(cls,text)=>{const e=document.createElement('div');e.className=cls;e.textContent=text;return e};
+function metrics(id,rows){const el=$(id);el.replaceChildren(...rows.map(([k,v,c])=>{const m=div('metric',''),a=document.createElement('span'),b=document.createElement('b');a.textContent=k;b.textContent=v;b.className=c||'';m.append(a,b);return m}))}
+function lines(id,rows){$(id).replaceChildren(...rows.map(([k,v,c])=>{const e=div('rowline',''),a=document.createElement('span'),b=document.createElement('span');a.textContent=k;b.textContent=v;b.className=c||'';e.append(a,b);return e}))}
+function table(id,headers,rows){const el=$(id);el.replaceChildren();if(!rows.length){el.append(div('empty','Veri yok / henüz gözlenmedi'));return}const t=document.createElement('table'),h=document.createElement('thead'),tr=document.createElement('tr');headers.forEach(v=>{const td=document.createElement('th');td.textContent=v;tr.append(td)});h.append(tr);t.append(h);const b=document.createElement('tbody');rows.forEach(row=>{const r=document.createElement('tr');row.forEach(v=>{const td=document.createElement('td');if(Array.isArray(v)){td.textContent=v[0];td.className=v[1]}else td.textContent=v??'—';r.append(td)});b.append(r)});t.append(b);el.append(t)}
+function split(id,a,b){const el=$(id);el.replaceChildren();if(!num(a)||!num(b)||a+b<=0)return;for(const n of [a,b]){const i=document.createElement('i');i.style.width=(100*n/(a+b))+'%';el.append(i)}}
+async function get(path){const ctl=new AbortController(),timer=setTimeout(()=>ctl.abort(),25000);try{const r=await fetch(path,{headers:key?{'X-API-Key':key}:{},cache:'no-store',signal:ctl.signal});if(!r.ok)throw Error('HTTP '+r.status);return await r.json()}finally{clearTimeout(timer)}}
+function query(path,extra={}){return '/api/'+path+'?'+new URLSearchParams({coin:selected,...extra})}
+function safeDate(v){if(!v)return '—';const d=new Date(v);return Number.isNaN(d.valueOf())?'—':d.toISOString().slice(11,19)+' UTC'}
+function surface(id){const c=$(id),r=c.getBoundingClientRect(),ratio=Math.min(2,window.devicePixelRatio||1),w=Math.max(1,r.width),h=Math.max(1,r.height);if(c.width!==Math.round(w*ratio)||c.height!==Math.round(h*ratio)){c.width=Math.round(w*ratio);c.height=Math.round(h*ratio)}const ctx=c.getContext('2d');ctx.setTransform(ratio,0,0,ratio,0,0);ctx.clearRect(0,0,w,h);return [ctx,w,h]}
+function canvasText(ctx,s,x,y,c='#8fa4ad'){ctx.fillStyle=c;ctx.font='11px system-ui';ctx.fillText(s,x,y)}
+function emptyCanvas(ctx,w,h){canvasText(ctx,'Veri bekleniyor / kullanılamıyor',12,h/2)}
+function chartCandles(){const [c,w,h]=surface('candles'),rows=snapshot.candles?.candles?.filter(x=>[x.o,x.h,x.l,x.c,x.v].every(num))||[];if(!rows.length)return emptyCanvas(c,w,h);const pad=12,right=65,plot=w-right-pad,H=h-37,lo=Math.min(...rows.map(x=>x.l)),hi=Math.max(...rows.map(x=>x.h)),range=hi-lo||1,Y=p=>pad+(hi-p)/range*(H-pad);c.strokeStyle='#324047';for(let i=0;i<=4;i++){const p=lo+range*i/4,y=Y(p);c.beginPath();c.moveTo(pad,y);c.lineTo(w-right,y);c.stroke();canvasText(c,fmt(p,2),w-right+3,y+3)}const step=plot/rows.length,mv=Math.max(...rows.map(x=>x.v),1);rows.forEach((x,i)=>{const px=pad+(i+.5)*step,col=x.c>=x.o?'#39f9a0':'#ff4759';c.strokeStyle=col;c.fillStyle=col;c.globalAlpha=x.closed?1:.45;c.beginPath();c.moveTo(px,Y(x.h));c.lineTo(px,Y(x.l));c.stroke();c.fillRect(px-step*.32,Math.min(Y(x.o),Y(x.c)),Math.max(1,step*.64),Math.max(1,Math.abs(Y(x.o)-Y(x.c))));c.globalAlpha=.5;c.fillRect(px-step*.32,h-18-x.v/mv*17,Math.max(1,step*.64),x.v/mv*17);c.globalAlpha=1});canvasText(c,safeDate(rows[0].t),pad,h-3);canvasText(c,safeDate(rows.at(-1).t),Math.max(pad,w-right-70),h-3)}
+function chartHeat(){const [c,w,h]=surface('heatcanvas'),bins=snapshot.heat?.bins||[];if(!bins.length)return emptyCanvas(c,w,h);const p=12,base=h-22,mid=(w-2*p)/2+p,dx=(w-2*p)/bins.length,max=Math.max(...bins.flatMap(b=>[b.long_usd||0,b.short_usd||0]),1);bins.forEach((b,i)=>{const x=p+i*dx,L=b.long_usd/max,S=b.short_usd/max;c.fillStyle='rgba(255,70,89,'+(0.12+L*.85)+')';if(L>0)c.fillRect(x,base-L*(h-32),Math.max(1,dx-1),L*(h-32));c.fillStyle='rgba(57,249,160,'+(.12+S*.85)+')';if(S>0)c.fillRect(x,base-S*(h-32),Math.max(1,dx-1),S*(h-32))});c.strokeStyle='#d6e2e4';c.beginPath();c.moveTo(mid,5);c.lineTo(mid,base);c.stroke();canvasText(c,usd(bins[0].lo),p,h-5);canvasText(c,usd(snapshot.heat.price),mid-22,h-5);canvasText(c,usd(bins.at(-1).hi),w-65,h-5);canvasText(c,'Long',p,12,'#ff4759');canvasText(c,'Short',w-52,12,'#39f9a0')}
+function chartCvd(){const [c,w,h]=surface('cvdchart'),r=snapshot.cvd||[];if(!Array.isArray(r)||!r.length)return emptyCanvas(c,w,h);const data={spot:[],perp:[]},sum={spot:0,perp:0};r.forEach(x=>{if(x.market in data&&num(x.delta)){sum[x.market]+=x.delta;data[x.market].push([Date.parse(x.hour),sum[x.market]])}});const pts=Object.values(data).flat().filter(x=>num(x[0]));if(!pts.length)return emptyCanvas(c,w,h);const minX=Math.min(...pts.map(x=>x[0])),maxX=Math.max(...pts.map(x=>x[0])),lo=Math.min(0,...pts.map(x=>x[1])),hi=Math.max(0,...pts.map(x=>x[1])),x=t=>12+(t-minX)/(maxX-minX||1)*(w-75),y=v=>12+(hi-v)/(hi-lo||1)*(h-30);for(let i=0;i<4;i++){const v=lo+(hi-lo)*i/3;c.strokeStyle='#25353c';c.beginPath();c.moveTo(12,y(v));c.lineTo(w-55,y(v));c.stroke();canvasText(c,usd(v),w-54,y(v)+3)}for(const [m,col] of [['spot','#39f9a0'],['perp','#66d8f4']]){c.strokeStyle=col;c.lineWidth=1.7;c.beginPath();data[m].forEach((p,i)=>i?c.lineTo(x(p[0]),y(p[1])):c.moveTo(x(p[0]),y(p[1])));c.stroke()}}
+function render(){const a=snapshot.analysis||{},d=a.derivatives||{},f=a.flows?.[win]||{},ob=snapshot.depth||a.orderbook||{},b=ob.bands?.['1']||{},o=a.options||{},adv=snapshot.advanced||{},opt=adv.options_flow||{},risk=adv.cascade||{},w=snapshot.whale||{},coverage=f.coverage||{},cvd=f.cvd||{};
+$('symbol').textContent=selected+'/USDT';$('price').textContent=usd(a.price);$('stamp').textContent=a.generated_utc?a.generated_utc+' UTC':'Analiz alınamadı';
+metrics('changes',Object.entries(a.price_change_pct||{}).map(([k,v])=>[k,pct(v),tone(v)]));metrics('overviewMetrics',[['Toplam OI',usd(d.oi_total_usd)],['Coinbase primi',pct(a.coinbase_premium_pct),tone(a.coinbase_premium_pct)],['Spot CVD',usd(cvd.spot?.delta),tone(cvd.spot?.delta)],['Perp CVD',usd(cvd.perp?.delta),tone(cvd.perp?.delta)]]);
+const valid=Object.values(cvd).filter(v=>num(v.buy)&&num(v.sell)),buy=valid.length?valid.reduce((s,v)=>s+v.buy,0):null,sell=valid.length?valid.reduce((s,v)=>s+v.sell,0):null;lines('sentiment',[['Alış hacmi',usd(buy),'green'],['Satış hacmi',usd(sell),'red'],['Alış payı',num(buy)&&num(sell)&&buy+sell>0?fmt(buy/(buy+sell)*100,1)+'%':'—']]);split('sentbar',buy,sell);
+metrics('depthmetrics',[['Alış ±%1',usd(b.bid_usd),'green'],['Satış ±%1',usd(b.ask_usd),'red'],['Dengesizlik',fmt(b.imbalance,3),tone(b.imbalance)],['Kaynaklar',fmt(ob.sources?.length,0)]]);table('walls',['Taraf','Fiyat','USD','Mesafe'],['ask','bid'].flatMap(side=>(ob.walls?.[side]||[]).map(v=>[[side==='bid'?'ALIŞ':'SATIŞ',side==='bid'?'green':'red'],usd(v.price),usd(v.usd),pct(v.dist_pct)])));$('depthnote').textContent='Birleştirilmiş duvarlar • '+safeDate(ob.ts)+' • '+(ob.sources||[]).join(', ');
+metrics('dermetrics',[['OI',usd(d.oi_total_usd)],['OI '+win,pct(d.oi_change_pct?.[win]),tone(d.oi_change_pct?.[win])],['Funding 8s',pct(num(d.funding_8h_weighted)?d.funding_8h_weighted*100:null)],['Yıllık funding',pct(d.funding_ann_pct)]]);table('venues',['Borsa','OI','F. 8s','L/S hesap'],Object.entries(d.venues||{}).map(([k,v])=>[k,usd(v.oi_usd),pct(num(v.funding_8h)?v.funding_8h*100:null),fmt(v.ls_global??v.ls_account)]));
+metrics('optionmetrics',[['OI',usd(o.oi_usd)],['DVOL',fmt(o.dvol)],['15dk CALL prim',usd(opt.call_premium_usd),'green'],['15dk PUT prim',usd(opt.put_premium_usd),'red'],['P/C prim',fmt(opt.put_call_premium_ratio,3)],['Net agresif prim',usd(opt.net_premium_usd),tone(opt.net_premium_usd)]]);split('optionbar',opt.call_premium_usd,opt.put_premium_usd);table('expiries',['Vade','Max pain','P/C OI','GEX / %1'],(o.expiries||[]).map(e=>[e.expiry,usd(e.max_pain),fmt(e.put_call),usd(e.gex_signed_proxy_usd_1pct)]));$('optionnote').textContent='Snapshot '+safeDate(o.snapshot_utc)+(o.stale?' • ESKİ':'')+' | Prim kapsamı: '+(opt.status||'yok')+' | İmzalı GEX tahminidir.';
+$('score').textContent=fmt(risk.score,1);$('gauge').style.setProperty('--arc',(num(risk.score)?Math.max(0,Math.min(100,risk.score)):0)+'%');lines('riskmetrics',[['Durum',risk.status||'veri yok'],['Seviye',risk.level||'—'],...Object.entries(risk.components||{}).map(([k,v])=>[k,fmt(v)])]);
+metrics('flowmetrics',[['Spot CVD',usd(cvd.spot?.delta),tone(cvd.spot?.delta)],['Perp CVD',usd(cvd.perp?.delta),tone(cvd.perp?.delta)],['Long likidasyon',usd(f.liquidations?.long),'red'],['Short likidasyon',usd(f.liquidations?.short),'green']]);
+metrics('whalemetrics',[['Net '+win,usd(f.whales?.net_usd),tone(f.whales?.net_usd)],['Alış',usd(f.whales?.buy_usd),'green'],['Satış',usd(f.whales?.sell_usd),'red'],['15dk kayıt',fmt(w.trades?.length,0)]]);table('whaletable',['UTC','Borsa / Tür','Yön','Fiyat','USD','+5dk'],(w.trades||[]).map(t=>[safeDate(t.ts).slice(0,8),t.venue+' / '+t.market,[t.side,t.side==='buy'?'green':'red'],usd(t.price),usd(t.usd),pct(t.reaction_pct?.['5m'])]));
+table('anomalies',['Kaynak','Piyasa','Z','Durum'],(adv.anomalies||[]).map(x=>[x.venue,x.market,fmt(x.z,3),[x.anomalous?'ANOMALİ':x.status,x.anomalous?'amber':'muted']]));table('coverage',['Kaynak','Piyasa','Dakika'],(coverage.sources||[]).map(x=>[x.venue,x.market,x.observed_minutes+'/'+coverage.expected_minutes]));
+table('structuretable',['TF','Kapanış','Önceki tepe','Önceki dip','Yapı'],['4h','1h','15m'].map(k=>{const s=a.price_structure?.frames?.[k];return [k,usd(s?.close),usd(s?.prior_range_high),usd(s?.prior_range_low),s?(s.close>s.prior_range_high?'Üst kırılım':s.close<s.prior_range_low?'Alt kırılım':'Aralık'):'—']}));
+table('corrtable',['Varlık','Korelasyon','Beta','24sa'],(Array.isArray(snapshot.alts)?snapshot.alts:[]).map(x=>[x.coin,fmt(x.corr,3),fmt(x.beta,3),[pct(x.chg_24h_pct),tone(x.chg_24h_pct)]]));metrics('liquidmetrics',[['Long '+win,usd(f.liquidations?.long)],['Short '+win,usd(f.liquidations?.short)]]);
+$('summary').replaceChildren(...(a.summary||[]).map(s=>div('rowline',s)));metrics('sources',[['Analiz zamanı',a.generated_utc||'—'],['Isı haritası kaynakları',Object.keys(snapshot.heat?.venues_used||{}).join(', ')||'—']]);lines('availability',Object.entries(snapshot.errors||{}).map(([k,v])=>[k,v,'amber']).concat([['Varlık',selected],['Canlı emir','Kapalı'],['On-chain','Entegre değil'],['AI işlem sinyali','Entegre değil']]));
+$('raw').textContent=JSON.stringify(snapshot,null,2);$('candleinfo').textContent=(snapshot.candles?.source||'Binance USD-M')+' • '+frame+' • son mum kapanmamışsa soluk';$('heatnote').textContent='Tahmini model • '+(snapshot.heat?.window||win)+' • '+(snapshot.heat?.generated_utc||'veri yok');
+const ticks=$('ticker');ticks.replaceChildren(...Object.entries(snapshot.tickers||{}).map(([k,v])=>div('',''+k+'/USDT '+usd(v.price)+' '+pct(v.price_change_pct?.['24h']))));if(!ticks.children.length)ticks.append(div('muted','Piyasa akışı bekleniyor'));
+chartCandles();chartHeat();chartCvd()}
+async function health(){try{const h=await get('/health');const active=h.data_status==='active',status=h.data_status||'unknown';$('connection').replaceChildren(div('dot '+(active?'ok':'bad'),''),document.createTextNode(active?'VERİ AKIŞI AKTİF':status.toUpperCase()));$('railstatus').textContent=status;table('healthtable',['Akış','Yaş (sn)','Mesaj','Reconnect'],Object.entries(h.streams||{}).map(([k,v])=>[k,[fmt(v.age_s,0),(h.stale_streams||[]).includes(k)?'red':'green'],fmt(v.msgs,0),fmt(v.reconnects,0)]))}catch(e){$('connection').textContent='BAĞLANTI HATASI';$('railstatus').textContent='Bağlantı yok'}}
+async function load(){if(busy){pending=true;return}busy=true;pending=false;const n=++seq,coin=selected,w=win,fr=frame;$('refresh').disabled=true;const jobs={analysis:query('analysis'),advanced:query('advanced'),depth:query('depth'),heat:query('heatmap',{window:w}),cvd:query('cvd',{window:w}),whale:query('whale-flow',{window:'15m',limit:'20'}),alts:'/api/alts?base='+encodeURIComponent(coin),candles:query('candles',{frame:fr})};const entries=Object.entries(jobs);try{const result=await Promise.allSettled(entries.map(([,p])=>get(p)));if(n!==seq||coin!==selected||w!==win||fr!==frame)return;const data={errors:{},tickers:{}};result.forEach((v,i)=>{const k=entries[i][0];if(v.status==='fulfilled')data[k]=v.value;else data.errors[k]=v.reason.message});if(data.analysis)data.tickers[coin]=data.analysis;snapshot=data;render()}finally{busy=false;$('refresh').disabled=false;if(pending)load()}}
+function changed(){selected=$('coin').value||'BTC';frame=$('frame').value;win=$('window').value;seq++;snapshot={};render();load()}
+async function init(){try{const c=await get('/api/coins');if(!Array.isArray(c.coins)||!c.coins.length)throw Error('coin');$('coin').replaceChildren(...c.coins.map(x=>new Option(x,x)));selected=$('coin').value}catch(e){$('coin').replaceChildren(new Option('BTC','BTC'));selected='BTC'}load();health()}
+$('coin').onchange=changed;$('frame').onchange=changed;$('window').onchange=changed;$('refresh').onclick=()=>{load();health()};$('key').onclick=()=>{const v=prompt('API anahtarı (yalnız bu sekmenin belleğinde saklanır)');if(v!==null){key=v.trim();init()}};$('full').onclick=()=>document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen?.().catch(()=>{});document.querySelectorAll('[data-full]').forEach(b=>b.onclick=()=>document.fullscreenElement?document.exitFullscreen():b.closest('.panel').requestFullscreen?.().catch(()=>{}));
+async function imageBlob(path){const r=await fetch(path,{headers:key?{'X-API-Key':key}:{}});if(!r.ok)throw Error('HTTP '+r.status);const b=await r.blob();if(!b.type.startsWith('image/'))throw Error('Görsel yok');return URL.createObjectURL(b)}
+$('card').onclick=async()=>{$('card').disabled=true;$('cardstatus').textContent='4K hazırlanıyor…';try{const u=await imageBlob(query('card4k.png'));if(cardUrl)URL.revokeObjectURL(cardUrl);cardUrl=u;$('card-image').src=u;$('card-image').style.display='block';$('cardstatus').textContent='Orijinal 4K kart • '+selected}catch(e){$('cardstatus').textContent='Kart alınamadı: '+e.message}finally{$('card').disabled=false}};
+document.querySelectorAll('[data-image]').forEach(b=>b.onclick=async()=>{const winRef=window.open('about:blank','_blank');if(!winRef)return;b.disabled=true;try{const u=await imageBlob(query(b.dataset.image,{window:win}));winRef.location.href=u;setTimeout(()=>URL.revokeObjectURL(u),120000)}catch(e){winRef.close();alert('Grafik alınamadı: '+e.message)}finally{b.disabled=false}});
+setInterval(()=>{$('clock').textContent=new Date().toISOString().slice(11,19)+' UTC'},1000);setInterval(load,30000);setInterval(health,10000);
+const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;let paused=reduced,angle=0,drag=0,last=0;const tor=$('torus');$('pause').textContent=paused?'Oynat':'Duraklat';$('pause').setAttribute('aria-pressed',String(paused));$('pause').onclick=()=>{paused=!paused;$('pause').textContent=paused?'Oynat':'Duraklat';$('pause').setAttribute('aria-pressed',String(paused));if(!paused)requestAnimationFrame(animate);else drawCore()};
+const points=[];for(let i=0;i<84;i++)for(let j=0;j<20;j++){const u=2*Math.PI*i/84,v=2*Math.PI*j/20,R=1.08,r=.42;points.push([(R+r*Math.cos(v))*Math.cos(u),(R+r*Math.cos(v))*Math.sin(u),r*Math.sin(v),i,j])}
+function drawCore(){const [c,w,h]=surface('torus'),cx=w/2,cy=h*.49,s=Math.min(w,h)*.25,ax=.65+drag*.003,ay=angle;const projected=points.map(p=>{const x=p[0]*Math.cos(ay)+p[2]*Math.sin(ay),z=-p[0]*Math.sin(ay)+p[2]*Math.cos(ay),y=p[1]*Math.cos(ax)-z*Math.sin(ax),zz=p[1]*Math.sin(ax)+z*Math.cos(ax),k=4/(4-zz);return [cx+x*s*k,cy+y*s*k,zz,p[3],p[4]]});c.lineWidth=.65;for(let i=0;i<projected.length;i++){const p=projected[i],q=projected[(i+20)%points.length],r=projected[Math.floor(i/20)*20+(i+1)%20];const a=.12+Math.max(0,p[2]+1.6)*.17;c.strokeStyle=p[0]<cx?'rgba(65,255,162,'+a+')':'rgba(255,70,93,'+a+')';c.beginPath();c.moveTo(p[0],p[1]);c.lineTo(q[0],q[1]);c.moveTo(p[0],p[1]);c.lineTo(r[0],r[1]);c.stroke();if((p[3]+p[4])%7===0){c.fillStyle='rgba(210,240,245,'+Math.min(.9,a+.2)+')';c.fillRect(p[0],p[1],1.4,1.4)}}const rad=Math.min(w,h)*.126;c.save();c.translate(cx,cy);c.scale(.85+.15*Math.abs(Math.cos(angle)),1);const g=c.createRadialGradient(-rad*.25,-rad*.4,0,0,0,rad);g.addColorStop(0,'#eaf2f4');g.addColorStop(.3,'#76858a');g.addColorStop(.6,'#263339');g.addColorStop(1,'#a6b7be');c.fillStyle=g;c.shadowBlur=20;c.shadowColor='#c5e3d980';c.beginPath();c.arc(0,0,rad,0,Math.PI*2);c.fill();c.shadowBlur=0;for(let i=0;i<6;i++){c.strokeStyle=i%2?'#a9b7be':'#25323a';c.lineWidth=1;c.beginPath();c.arc(0,0,rad*(.71+i*.05),0,Math.PI*2);c.stroke()}c.fillStyle='#0a151a';c.font='900 '+rad*1.35+'px system-ui';c.textAlign='center';c.textBaseline='middle';c.fillText(selected==='BTC'?'₿':selected,0,2,rad*1.55);c.restore();c.strokeStyle='#63757e';c.lineWidth=1;c.beginPath();c.ellipse(cx,h*.88,Math.min(w*.38,h*.38),h*.046,0,0,Math.PI*2);c.stroke();canvasText(c,'IMPERION • 3D VISUAL CORE',Math.max(8,cx-85),h*.96,'#c6d3d7')}
+function animate(t){if(paused)return;if(t-last>31){angle+=.012;last=t;drawCore()}requestAnimationFrame(animate)}let dragging=false;tor.addEventListener('pointerdown',e=>{dragging=true;tor.setPointerCapture(e.pointerId)});tor.addEventListener('pointermove',e=>{if(dragging){drag+=e.movementY;angle+=e.movementX*.01;drawCore()}});tor.addEventListener('pointerup',()=>dragging=false);tor.addEventListener('pointercancel',()=>dragging=false);let resizeTimer;addEventListener('resize',()=>{clearTimeout(resizeTimer);resizeTimer=setTimeout(()=>{drawCore();chartCandles();chartHeat();chartCvd()},120)});if(paused)drawCore();else requestAnimationFrame(animate);init();
+</script></body></html>
