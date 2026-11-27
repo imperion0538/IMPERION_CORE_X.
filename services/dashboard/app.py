@@ -1,4 +1,4 @@
-"""Streamlit dashboard for IMPERION Advanced."""
+"""Streamlit dashboard for IMPERION Advanced (with Deribit options)."""
 import streamlit as st
 import requests
 import os
@@ -36,4 +36,27 @@ with col2:
     except Exception as e:
         st.error(str(e))
 
-st.caption("Models are estimates. Not investment advice.")
+st.subheader("Deribit Options Flow")
+col3, col4 = st.columns(2)
+
+with col3:
+    try:
+        flow = requests.get(f"{API_BASE}/api/options/flow/{coin}", timeout=5).json()
+        st.metric("Net Premium USD", f"{flow.get('net_premium_usd', 0):,.0f}")
+        st.metric("Put/Call Ratio", flow.get("put_call_ratio", "—"))
+        if flow.get("large_trades"):
+            st.dataframe(pd.DataFrame(flow["large_trades"]).head(10))
+    except Exception:
+        st.info("No options flow data yet")
+
+with col4:
+    try:
+        summ = requests.get(f"{API_BASE}/api/options/{coin}", timeout=5).json()
+        st.metric("Max Pain", f"${summ.get('max_pain', 0):,.0f}")
+        st.metric("Total OI", f"{summ.get('total_oi', 0):,.0f}")
+        if summ.get("top_oi"):
+            st.dataframe(pd.DataFrame(summ["top_oi"]).head(8))
+    except Exception:
+        st.info("No options summary yet")
+
+st.caption("Models are estimates. Not investment advice. Options data from Deribit public API.")

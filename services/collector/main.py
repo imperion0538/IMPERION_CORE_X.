@@ -1,8 +1,8 @@
-"""Collector service: publishes trades, liquidations, OI snapshots to NATS."""
+"""Collector service: publishes trades, liquidations, OI snapshots and Deribit options to NATS."""
 import asyncio, json, logging, os
-from datetime import datetime, timezone
 import aiohttp
 import nats
+from .deribit import deribit_options_trades, deribit_options_summary
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("collector")
@@ -11,7 +11,7 @@ NATS_URL = os.environ.get("NATS_URL", "nats://nats:4222")
 COINS = [c.strip().upper() for c in os.environ.get("COINS", "BTC,ETH,SOL").split(",")]
 
 async def publish(nc, subject, payload):
-    await nc.publish(subject, json.dumps(payload).encode())
+    await nc.publish(subject, json.dumps(payload, default=str).encode())
 
 async def binance_perp_trades(nc):
     streams = "/".join(f"{c.lower()}usdt@aggTrade" for c in COINS)
@@ -32,10 +32,10 @@ async def binance_perp_trades(nc):
 async def main():
     nc = await nats.connect(NATS_URL)
     log.info("NATS connected")
-    # In production: run multiple streams concurrently (bybit, okx, liq, rest OI etc.)
     await asyncio.gather(
         binance_perp_trades(nc),
-        # add more collectors here
+        deribit_options_trades(nc, publish),
+        deribit_options_summary(nc, publish),
     )
 
 if __name__ == "__main__":
