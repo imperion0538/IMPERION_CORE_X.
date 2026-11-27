@@ -1,6 +1,7 @@
 """Telegram botu: komutlar (long polling), alarmlar ve isteğe bağlı zamanlı raporlar."""
-import asyncio, logging, time
+import asyncio, json, logging, time
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
 import aiohttp
 from . import analysis, charts, config, db, fmt, heatmap, http, state, whales
 
@@ -20,6 +21,43 @@ async def photo(chat, png, caption):
     form.add_field("photo", png, filename="chart.png", content_type="image/png")
     async with s.post(f"{API}/sendPhoto", data=form) as r:
         if r.status != 200: log.warning("sendPhoto %s: %s", r.status, await r.text())
+
+CARD = Path(__file__).resolve().parents[1] / "assets" / "imperion-btc-tr-4k.png"
+
+
+async def send_card(chat):
+    client = await http.session()
+    with CARD.open("rb") as image:
+        form = aiohttp.FormData()
+        form.add_field("chat_id", str(chat))
+        form.add_field("document", image, filename="IMPERION-BTC-TR-4K.png", content_type="image/png")
+        form.add_field("caption", "IMPERION CORE · BTCUSDT · 4K PNG · 26 Kasım 2026, 15:54 TSİ")
+        async with client.post(f"{API}/sendDocument", data=form) as response:
+            if response.status != 200:
+                log.warning("4K kart teslimi başarısız: HTTP %s", response.status)
+                return False
+            return bool((await response.json()).get("ok"))
+
+
+async def deliver_card():
+    if not (config.TELEGRAM_BOT_TOKEN and config.TELEGRAM_CHAT_IDS):
+        return
+    for chat in sorted(config.TELEGRAM_CHAT_IDS):
+        async with db.pool.acquire() as conn:
+            async with conn.transaction():
+                claimed = await conn.fetchval(
+                    "INSERT INTO telegram_deliveries (kind, chat) VALUES ($1,$2) ON CONFLICT DO NOTHING RETURNING true",
+                    "btc-tr-4k-2026-11-26", chat,
+                )
+                if claimed:
+                    try:
+                        sent = await send_card(chat)
+                    except (aiohttp.ClientError, asyncio.TimeoutError):
+                        sent = False
+                    if not sent:
+                        raise RuntimeError("Telegram 4K kartı teslim edilemedi")
+                    log.info("Telegram 4K kart teslimi başarılı")
+
 
 def _args(parts, default_window):
     coin, window = "BTC", default_window
@@ -44,6 +82,8 @@ async def handle(chat, text):
     if cmd in ("/btc", "/eth", "/sol") or cmd == "/analiz":
         coin = cmd[1:].upper() if cmd != "/analiz" else _args(rest, "24h")[0]
         return await send(chat, fmt.analysis_text(await analysis.analysis(coin)))
+    if cmd == "/kart":
+        return await send_card(chat)
     if cmd == "/isi":
         coin, w = _args(rest, "24h")
         h = await heatmap.model(coin, w)
@@ -102,7 +142,21 @@ async def handle(chat, text):
         o = await analysis.options(coin)
         if not o: return await send(chat, f"{coin} için opsiyon verisi yok (yalnız BTC, ETH).")
         L = [f"<b>{coin} opsiyonlar (Deribit)</b> · OI {fmt.usd(o['oi_usd'])} · put/call {o['put_call']:.2f} · DVOL {o['dvol'] or 0:.1f} (24s önce {o['dvol_24h_ago'] or 0:.1f})"]
-        L += [f"{e['expiry']}: OI {fmt.usd(e['oi_usd'])} · max pain ${e['max_pain']:,.0f} · P/C {e['put_call']:.2f}" for e in o["expiries"]]
+        for e in o["expiries"]:
+            L.append(f"{e['expiry']}: OI {fmt.usd(e['oi_usd'])} · max pain ${e['max_pain']:,.0f} · P/C {e['put_call']:.2f}")
+            if "max_pain_payout_usd" in e:
+                L.append(f"  Endekse uzaklık {fmt.pct(e['max_pain_distance_pct'])} · minimum ödeme {fmt.usd(e['max_pain_payout_usd'])}")
+                L.append(f"  GEX / %1: brüt {fmt.usd(e['gex_gross_usd_1pct'])} · imzalı tahmin {fmt.usd(e['gex_signed_proxy_usd_1pct'])}"
+                         f" · model OI kapsamı %{e['greeks_oi_coverage_pct']:.0f}")
+                if e["top_strike_gex"]:
+                    L.append("  GEX seviyeleri: " + ", ".join(f"${x['strike']:,.0f} {fmt.usd(x['signed_gex_usd_1pct'])}"
+                                                              for x in e["top_strike_gex"][:3]))
+        for item in o.get("exchange_greeks", [])[:3]:
+            g = item["greeks"]
+            vals = " ".join(f"{key} {g[key]:.4g}" for key in ("delta", "gamma", "vega", "theta", "rho") if g.get(key) is not None)
+            L.append(f"{fmt.escape(item['instrument'])}: {vals}")
+        if o.get("gex_method"):
+            L.append("İmzalı GEX, call pozitif / put negatif modelidir. Piyasa yapıcı pozisyonları bilinmiyor.")
         return await send(chat, "\n".join(L))
     if cmd == "/altlar":
         rows = await analysis.alts("BTC")
@@ -187,4 +241,44 @@ async def reports_loop():
             try: await broadcast(fmt.analysis_text(await analysis.analysis("BTC")))
             except Exception as e: log.warning("rapor hatası: %s", e)
 
-ALL = [poll, alerts_loop, reports_loop]
+async def options_alerts():
+    if not (config.TELEGRAM_BOT_TOKEN and config.TELEGRAM_CHAT_IDS and config.ALERTS_ENABLED):
+        return
+    seen = {}
+    while True:
+        async with db.pool.acquire() as conn:
+            for coin in (c for c in config.COINS if c in ("BTC", "ETH")):
+                rows = await conn.fetch(
+                    "SELECT ts, data FROM options_snap WHERE coin=$1 AND ts > now() - interval '45 minutes' ORDER BY ts DESC LIMIT 2",
+                    coin,
+                )
+                if not rows:
+                    continue
+                previous = seen.get(coin)
+                seen[coin] = rows[0]["ts"]
+                if previous is None or previous >= rows[0]["ts"] or len(rows) < 2:
+                    continue
+                current, old = (json.loads(row["data"]) for row in rows)
+                notices = []
+                if current.get("dvol") is not None and old.get("dvol") is not None:
+                    change = current["dvol"] - old["dvol"]
+                    if abs(change) >= config.OPTIONS_DVOL_CHANGE:
+                        notices.append(f"DVOL {change:+.1f} puan → {current['dvol']:.1f}")
+                prior = {e["expiry"]: e for e in old["expiries"]}
+                for e in current["expiries"]:
+                    p = prior.get(e["expiry"])
+                    if not p:
+                        continue
+                    change = (e["max_pain"] / p["max_pain"] - 1) * 100
+                    if abs(change) >= config.OPTIONS_MAX_PAIN_CHANGE_PCT:
+                        notices.append(f"{e['expiry']} max pain: ${p['max_pain']:,.0f} → ${e['max_pain']:,.0f} ({change:+.1f}%)")
+                    a, b = e.get("gex_signed_proxy_usd_1pct"), p.get("gex_signed_proxy_usd_1pct")
+                    if (a is not None and b is not None and a * b < 0
+                            and min(abs(a), abs(b)) >= config.OPTIONS_GEX_FLIP_MIN_USD):
+                        notices.append(f"{e['expiry']} imzalı GEX tahmini: {fmt.usd(b)} → {fmt.usd(a)} / %1")
+                if notices:
+                    await broadcast(f"<b>🗼 {coin} opsiyon alarmı · Deribit</b>\n" + "\n".join(notices))
+        await asyncio.sleep(60)
+
+
+ALL = [poll, alerts_loop, reports_loop, deliver_card, options_alerts]

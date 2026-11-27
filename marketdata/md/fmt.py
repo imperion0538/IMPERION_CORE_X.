@@ -68,7 +68,8 @@ HELP = """<b>IMPERION Market Data</b>
 /balina [COIN] [1s|4s|24s] — büyük işlemler
 /oi [COIN] — borsa bazında OI ve funding
 /ls [COIN] — long/short oranları
-/opsiyon [COIN] — Deribit vadeleri, max pain
+/opsiyon [COIN] — Deribit vadeleri, max pain, GEX ve Greeks
+/kart — BTC analiz kartını 4K PNG dosyası olarak gönder
 /altlar — altcoinlerin BTC ile korelasyonu ve betası
 /durum — veri akışlarının sağlığı
 Veriler bilgilendirme amaçlıdır, yatırım tavsiyesi değildir."""

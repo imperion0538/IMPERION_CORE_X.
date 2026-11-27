@@ -43,3 +43,21 @@ bilgisi içermez.
 `/api/analysis` akış pencerelerinde borsa ve piyasa bazında gözlenen dakika
 sayısını raporlar. `/health` süreç durumuna ek olarak `data_status` ve
 `stale_streams` alanlarını döndürür.
+
+### Telegram 4K kartı ve opsiyon analizi
+
+`/kart`, 26 Kasım 2026 15:54 TSİ BTC kartını özgün 3840 × 2160
+boyutuyla Telegram belgesi olarak gönderir. Kart, bu sürümde yapılandırılmış
+Telegram sohbetlerine bir kez otomatik gönderilir.
+
+`/opsiyon BTC` ve `/api/options?coin=BTC`, Deribit vadeleri için strike
+bazında açık pozisyon, USD içsel ödeme eğrisi ve max pain seviyesini gösterir.
+Greeks, zincir genelinde mark IV ve forward fiyatından Black-76 ile hesaplanır.
+En yüksek OI'lı altı kontrat için Deribit ticker Greeks değerleri ayrıca
+`exchange_greeks` alanında bulunur. Greeks model kapsamı OI yüzdesiyle verilir.
+
+GEX, %1 fiyat hareketi başına yaklaşık USD duyarlılığıdır. İmzalı GEX
+call pozitif / put negatif varsayımını kullanır. Piyasa yapıcı yönü bilinmez.
+Opsiyon alarmları yeni snapshot'ları karşılaştırır. Eşikler:
+`OPTIONS_DVOL_CHANGE` (3 puan), `OPTIONS_MAX_PAIN_CHANGE_PCT` (%2),
+`OPTIONS_GEX_FLIP_MIN_USD` (1 milyon USD, işaret değişiminin her iki tarafında).

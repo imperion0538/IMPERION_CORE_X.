@@ -3,6 +3,8 @@ import asyncpg
 from . import config
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS telegram_deliveries (
+  kind TEXT NOT NULL, chat TEXT NOT NULL, PRIMARY KEY (kind, chat));
 CREATE TABLE IF NOT EXISTS liquidations (
   id BIGSERIAL PRIMARY KEY, ts TIMESTAMPTZ NOT NULL, venue TEXT NOT NULL, coin TEXT NOT NULL,
   side TEXT NOT NULL, price DOUBLE PRECISION NOT NULL, qty DOUBLE PRECISION NOT NULL, usd DOUBLE PRECISION NOT NULL);

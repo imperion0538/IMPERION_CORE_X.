@@ -1,7 +1,7 @@
 """Periyodik REST toplayıcılar: OI, funding, long/short, opsiyonlar; dakikalık kovaları veritabanına yazar."""
 import asyncio, collections, json, logging, time
 from datetime import datetime, timezone
-from . import config, db, http, state
+from . import config, db, http, option_metrics, state
 
 log = logging.getLogger("rest")
 UTC = timezone.utc
@@ -85,24 +85,40 @@ async def options_summary(c):
     idx = (await http.get("https://www.deribit.com/api/v2/public/get_index_price", {"index_name": f"{c.lower()}_usd"}))["result"]["index_price"]
     bs = (await http.get("https://www.deribit.com/api/v2/public/get_book_summary_by_currency", {"currency": c, "kind": "option"}))["result"]
     by = collections.defaultdict(list)
-    for o in bs:
-        _, exp, k, typ = o["instrument_name"].split("-")
-        by[exp].append((float(k), typ, o["open_interest"]))
-    ed = lambda e: datetime.strptime(e, "%d%b%y").replace(tzinfo=UTC, hour=8)
     now = datetime.now(UTC)
-    live = [e for e in by if ed(e) > now]
+    for o in bs:
+        name = o["instrument_name"]
+        _, exp, strike, side = name.split("-")
+        expiry = datetime.strptime(exp, "%d%b%y").replace(tzinfo=UTC, hour=8)
+        if expiry > now and o["open_interest"] > 0:
+            by[expiry].append({"name": name, "strike": float(strike), "side": side,
+                               "oi": float(o["open_interest"]), "iv": float(o.get("mark_iv") or 0) / 100,
+                               "forward": float(o.get("underlying_price") or 0),
+                               "rate": float(o.get("interest_rate") or 0)})
     exps = []
-    for e in sorted(sorted(live, key=lambda e: -sum(r[2] for r in by[e]))[:6], key=ed):
-        rows = by[e]; ks = sorted({r[0] for r in rows})
-        pain = lambda S: sum(oi * max(0, S - k) if t == "C" else oi * max(0, k - S) for k, t, oi in rows)
-        coi = sum(r[2] for r in rows if r[1] == "C"); poi = sum(r[2] for r in rows if r[1] == "P")
-        exps.append({"expiry": ed(e).strftime("%Y-%m-%d"), "oi_usd": (coi + poi) * idx, "max_pain": min(ks, key=pain), "put_call": poi / max(1e-9, coi)})
-    tc = sum(o["open_interest"] for o in bs if o["instrument_name"].endswith("-C")); tp = sum(o["open_interest"] for o in bs if o["instrument_name"].endswith("-P"))
+    ranked = sorted(by, key=lambda e: -sum(r["oi"] for r in by[e]))[:6]
+    for expiry in sorted(ranked):
+        metrics = option_metrics.expiry_metrics(by[expiry], idx, (expiry - now).total_seconds())
+        exps.append({"expiry": expiry.strftime("%Y-%m-%d"), **metrics})
+    chain = [row for rows in by.values() for row in rows]
+    tc = sum(row["oi"] for row in chain if row["side"] == "C")
+    tp = sum(row["oi"] for row in chain if row["side"] == "P")
+
+    async def ticker(row):
+        response = await http.get("https://www.deribit.com/api/v2/public/ticker", {"instrument_name": row["name"]})
+        result = response["result"]
+        return {"instrument": row["name"], "timestamp_ms": result["timestamp"],
+                "greeks": result.get("greeks"), "mark_iv": result.get("mark_iv")}
+
+    largest = sorted(chain, key=lambda row: -row["oi"])[:6]
+    exchange_greeks = await asyncio.gather(*(_safe("Deribit ticker", ticker(row)) for row in largest))
     now_ms = int(time.time() * 1000)
     dv = (await http.get("https://www.deribit.com/api/v2/public/get_volatility_index_data",
                          {"currency": c, "start_timestamp": now_ms - 2 * 86400000, "end_timestamp": now_ms, "resolution": 3600}))["result"]["data"]
     return {"index": idx, "oi_usd": (tc + tp) * idx, "put_call": tp / max(1e-9, tc), "dvol": dv[-1][4] if dv else None,
-            "dvol_24h_ago": (dv[-25][4] if len(dv) > 25 else dv[0][4]) if dv else None, "expiries": exps}
+            "dvol_24h_ago": (dv[-25][4] if len(dv) > 25 else dv[0][4]) if dv else None, "expiries": exps, "exchange_greeks": [g for g in exchange_greeks if g and g["greeks"]],
+            "greeks_model": "Black-76 using Deribit mark IV and forward",
+            "gex_method": "Gamma × base OI × index² × 1%; signed proxy assumes calls positive and puts negative. Dealer positions are unknown."}
 
 async def poll_options():
     while True:
