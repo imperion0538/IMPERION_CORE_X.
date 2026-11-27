@@ -1,45 +1,43 @@
-# IMPERION Market Data
+# IMPERION CORE X - Advanced Market Data Platform
 
-Çoklu borsa türev piyasası veri sistemi: likidasyon akışı, tahmini likidasyon ısı haritası, balina akışı ve CVD, long/short, OI, funding, opsiyon verisi; Telegram botu ve analiz API'si. Railway'de (Singapur) çalışır.
+Multi-exchange crypto derivatives monitoring system with real-time streaming, advanced analytics, anomaly detection, cascade risk scoring, estimated + enhanced liquidation heatmaps, and on-chain signals.
 
-- `marketdata/` — ana servis: toplayıcılar, ısı haritası modeli, analiz, Telegram botu, HTTP API.
+## Architecture (v2)
 
-## Veri kaynakları
-WebSocket: Binance (perp + spot işlemler, likidasyonlar), Bybit (işlemler, likidasyonlar), OKX (işlemler, likidasyonlar), Coinbase (spot işlemler), Hyperliquid (işlemler).
-REST (5 dk): Binance, Bybit, OKX, Bitget, Gate, Hyperliquid, Deribit OI/funding/long-short. Deribit opsiyonları (15 dk).
+```
+Collectors (WS + REST) → NATS JetStream → Processors (heatmap, anomaly, cascade, aggregation)
+                              ↓
+                         Redis (hot state + cache) + TimescaleDB (historical)
+                              ↓
+                    API (FastAPI) + Dashboard (Streamlit) + Telegram Bot
+```
 
-## Ortam değişkenleri
-| Değişken | Açıklama |
-|---|---|
-| `DATABASE_URL` | PostgreSQL bağlantısı |
-| `API_KEY` | `/api/*` uçları için anahtar (`X-API-Key` başlığı) |
-| `PUBLIC_READ` | `1` ise `/api/*` okuma uçları anahtarsız açılır, IP başına dakikada 60 istek |
-| `TELEGRAM_BOT_TOKEN` | Bot token'ı |
-| `TELEGRAM_CHAT_ID` | Komut ve alarm alacak sohbet kimlikleri (virgülle) |
-| `COINS` | Varsayılan `BTC,ETH,SOL` |
-| `WHALE_MIN_USD` | Balina eşiği, varsayılan 250000 (altcoinlerde ×0.4) |
-| `ALERT_LIQ_USD`, `ALERT_CASCADE_USD`, `ALERT_WHALE_USD` | Alarm eşikleri |
-| `REPORT_HOURS_UTC` | Zamanlı BTC raporu saatleri, örn. `5,13,21` |
+### Services
+- `services/collector` – WebSocket & REST collectors publishing to NATS
+- `services/processor` – Consumes events, builds heatmaps, anomaly scores, cascade risk, writes to Redis/DB
+- `services/api` – FastAPI serving enriched analysis
+- `services/dashboard` – Streamlit real-time dashboard
+- `services/onchain` – On-chain large transaction / exchange flow collector (skeleton)
+- `shared/` – Common models, improved heatmap, anomaly engine
 
-## API
-`/health`, `/api/analysis?coin=BTC`, `/api/heatmap?coin=BTC&window=1h|4h|24h|7d|30d`, `/api/heatmap.png`, `/api/liquidations`, `/api/whales`, `/api/derivatives`, `/api/options`, `/api/alts`, `/api/cvd`.
+## Key Improvements over v1
+- Decoupled collectors / processors via NATS
+- Redis for hot state, alerts, recent flows
+- Improved heatmap (OI delta + leverage distribution + order-book walls placeholder + cascade proximity score)
+- Anomaly detection (z-score + IsolationForest skeleton) on CVD / whale / liquidation flows
+- Cascade risk score combining heatmap clusters, funding, CVD divergence, recent liq volume
+- On-chain integration skeleton (Whale Alert / public tx monitoring)
+- Streamlit dashboard
+- Better observability hooks
 
-Isı haritası tahmini bir modeldir; veriler yatırım tavsiyesi değildir.
+## Quick Start (Docker)
+```bash
+docker-compose up -d
+```
 
-### Büyük işlem akışı ve fiyat tepkisi
+Environment variables see `.env.example`.
 
-`GET /api/whale-flow?coin=BTC&window=15m&min_price=61000&max_price=62500&limit=20`
-borsa ve piyasa türü bazında agresif alış/satış toplamlarını ve en son işlemleri
-döndürür. Fiyat sınırları isteğe bağlıdır. Pencereler: `5m`, `15m`, `1h`, `4h`.
-Telegram örneği: `/akis BTC 15m 61000 62500`.
+## Data Sources
+Same as v1 + optional order book depth + on-chain.
 
-Kapsam, her kaynak için veri gözlenen kapalı dakikaların sayısıdır.
-Olay listesi mevcut dakikadaki işlemleri de içerir. Fiyat tepkisi,
-işlem fiyatından aynı borsa ve piyasanın 1, 5 ve 15 dakika sonraki dakika
-kovası kapanışına yüzde değişimdir. Kova henüz kapanmamış veya eksikse
-değer `null` kalır. Büyük işlem verisi katılımcı kimliği veya pozisyon açma/kapama
-bilgisi içermez.
-
-`/api/analysis` akış pencerelerinde borsa ve piyasa bazında gözlenen dakika
-sayısını raporlar. `/health` süreç durumuna ek olarak `data_status` ve
-`stale_streams` alanlarını döndürür.
+**Not investment advice. Models are estimates.**
