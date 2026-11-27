@@ -83,6 +83,18 @@ async def init():
             log.info("tekrar eden kayıtlar temizlendi, trades_1m sıfırlandı")
     log.info("aktif yazıcı: %s", APP_NAME)
 
+async def connections():
+    """Bu veritabanına aynı kullanıcıyla bağlı süreçler (tanılama). Kimliği 'md:' ile başlamayan bağlantılar
+    eski/yabancı süreçlerdir (ör. kapanmamış eski dağıtım)."""
+    async with pool.acquire() as c:
+        rows = await c.fetch("""SELECT coalesce(application_name, '') app, host(client_addr) client, count(*) n,
+                                       min(backend_start) since
+                                FROM pg_stat_activity WHERE datname = current_database() AND usename = current_user
+                                GROUP BY 1, 2 ORDER BY 3 DESC""")
+        writer = await c.fetchval("SELECT app FROM writer_lock WHERE id = 1")
+    return [{"app": r["app"] or "(kimliksiz)", "client": r["client"], "connections": r["n"], "since": r["since"].isoformat() if r["since"] else None,
+             "role": "aktif yazıcı" if r["app"] == writer else "bu süreç" if r["app"] == APP_NAME else "yabancı"} for r in rows]
+
 async def is_writer():
     async with pool.acquire() as c:
         return await c.fetchval("SELECT app FROM writer_lock WHERE id = 1") == APP_NAME

@@ -124,11 +124,15 @@ async def card_png(req):
     return web.Response(body=charts.analysis_card_png(a, h, d), content_type="image/png")
 
 
+async def db_conns(req):
+    return j({"self": db.APP_NAME, "connections": await db.connections()})
+
 def app():
     a = web.Application(middlewares=[auth])
     a.add_routes([web.get("/", health), web.get("/health", health), web.get("/api/analysis", an), web.get("/api/heatmap", heat),
                   web.get("/api/heatmap.png", heat_png), web.get("/api/liquidations", liq), web.get("/api/whales", whales), web.get("/api/whale-flow", whale_report),
                   web.get("/api/derivatives", deriv), web.get("/api/options", opts), web.get("/api/alts", alts), web.get("/api/cvd", cvd),
                   web.get("/panel", panel), web.get("/api/coins", coins), web.get("/api/depth", depth), web.get("/api/orderbook.png", depth_png),
-                  web.get("/api/cvd.png", cvd_png), web.get("/api/liquidations.png", liq_png), web.get("/api/card.png", card_png)])
+                  web.get("/api/cvd.png", cvd_png), web.get("/api/liquidations.png", liq_png), web.get("/api/card.png", card_png),
+                  web.get("/api/db-connections", db_conns)])
     return a
