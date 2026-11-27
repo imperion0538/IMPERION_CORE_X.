@@ -200,6 +200,25 @@ async def network(coin):
     return await cached_feed("btc-network-context", 120, fetch)
 
 
+async def macro_with_fallback():
+    from . import macro
+
+    primary = await cross_assets.fetch()
+    if primary["status"] == "available":
+        return primary
+    try:
+        fallback = await asyncio.wait_for(macro.latest_macro(), timeout=2)
+    except Exception:
+        return primary
+    if fallback.get("status") != "observed" or fallback.get("stale", True):
+        return primary
+    quotes = {k: fallback[k] for k in ("dxy", "us10y", "spx") if fallback.get(k) is not None}
+    if not quotes:
+        return primary
+    return {**primary, "status": "partial", "fallback_quotes": quotes,
+            "fallback_source": fallback["source"], "fallback_fetched_utc": fallback["fetched_utc"]}
+
+
 async def load(coin):
     # A failed provider is retried once per minute; one source failure cannot block other evidence.
     async def get_status(name, fetch, scope):
@@ -213,7 +232,7 @@ async def load(coin):
         return await http.cached(f"public-status:{name}:{scope}", 60, read)
     jobs = {"stablecoin_liquidity": (stablecoins, ""), "etf_flows": (lambda: etf(coin), coin),
             "macro_calendar": (calendar, ""), "news": (news, ""),
-            "network_activity": (lambda: network(coin), coin), "macro_cross_assets": (cross_assets.fetch, "")}
+            "network_activity": (lambda: network(coin), coin), "macro_cross_assets": (macro_with_fallback, "")}
     values = await asyncio.gather(*(get_status(name, fn, scope) for name, (fn, scope) in jobs.items()))
     return dict(zip(jobs, values))
 
@@ -245,6 +264,12 @@ def summary(feeds, now=None):
         if row.get("status") == "available":
             label = {"SP500": "S&P 500", "DGS10": "ABD 10 yıllık faiz (%)", "DTWEXBGS": "Fed geniş dolar endeksi"}.get(code, code)
             lines.append(f"{label} · {row['value']:,.2f} ({row['observation_date']}, FRED).")
+    macro_data = available.get("macro_cross_assets", {})
+    fallback = macro_data.get("fallback_quotes", {})
+    if fallback:
+        labels = {"dxy": "DXY", "us10y": "ABD 10 yıllık faiz (%)", "spx": "S&P 500"}
+        values = ", ".join(f"{labels[key]} {value:,.2f}" for key, value in fallback.items())
+        lines.append(f"{values} ({macro_data['fallback_source']}, {macro_data['fallback_fetched_utc'][:16]} UTC).")
     network_data = available.get("network_activity", {})
     if network_data.get("unconfirmed_count") is not None:
         lines.append(f"Bitcoin ağında {network_data['unconfirmed_count']:,} onaysız işlem (mempool.space).")
