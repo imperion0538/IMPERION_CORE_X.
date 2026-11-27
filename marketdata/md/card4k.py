@@ -61,8 +61,8 @@ def _chart(fig, rect, cs, res, tf, tag, tag_fc, extra):
     """rect: (x, y, w, h) figür kesirleri. res: ta.analyze() çıktısı."""
     x0, y0, w, h = rect
     _box(fig, x0, y0, w, h, ec=LINE, lw=2.5)
-    fig.text(x0 + 0.012, y0 + h - 0.028, "₿", fontsize=30, color="white", fontweight="bold", va="center",
-             bbox=dict(boxstyle="circle,pad=0.15", fc="#f7931a", ec="#f7931a"))
+    fig.text(x0 + 0.018, y0 + h - 0.028, "B", fontsize=26, color="white", fontweight="bold", va="center", ha="center",
+             bbox=dict(boxstyle="circle,pad=0.3", fc="#f7931a", ec="#f7931a"))  # ₿ her yazı tipinde yok
     fig.text(x0 + 0.036, y0 + h - 0.028, f"{SYMBOL} · {tf}", fontsize=30, fontweight="bold", color=INK, va="center")
     fig.text(x0 + 0.155, y0 + h - 0.028, f" {tag} ", fontsize=18, fontweight="bold", color="white", va="center",
              bbox=dict(boxstyle="round,pad=0.35", fc=tag_fc, ec=tag_fc))
