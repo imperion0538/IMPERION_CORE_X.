@@ -96,8 +96,7 @@ async def live_card(coin):
 async def send_live_4k(chat, coin, reason=""):
     if coin not in config.COINS:
         return False
-    from . import research_card
-    png = await research_card.build(coin)
+    png = await card4k.build(coin)
     caption = f"{coin} · 3840×2160 PNG"
     if reason:
         caption += "\n" + reason
