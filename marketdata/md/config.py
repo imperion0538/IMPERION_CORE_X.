@@ -10,6 +10,8 @@ def _f(name, default):
 COINS = [c.strip().upper() for c in os.environ.get("COINS", "BTC,ETH,SOL").split(",") if c.strip()]
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 API_KEY = os.environ.get("API_KEY", "")
+# 1 ise /api/* okuma uçları anahtarsız açılır (IP başına dakikada 60 istek). Veriler yalnız herkese açık piyasa verisidir.
+PUBLIC_READ = os.environ.get("PUBLIC_READ", "0") == "1"
 PORT = int(os.environ.get("PORT", "8080"))
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_IDS = {s.strip() for s in os.environ.get("TELEGRAM_CHAT_ID", "").split(",") if s.strip()}

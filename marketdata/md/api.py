@@ -9,9 +9,23 @@ def _key_ok(req):
     k = req.headers.get("X-API-Key") or (req.headers.get("Authorization", "").removeprefix("Bearer ").strip())
     return bool(k) and hmac.compare_digest(k, config.API_KEY)
 
+_hits: dict = {}
+
+def _rate_ok(req, limit=60):
+    """IP başına dakikada en fazla `limit` istek (anahtarsız erişim için)."""
+    ip = (req.headers.get("X-Forwarded-For", "").split(",")[0].strip()) or (req.remote or "?")
+    now = time.time(); q = [t for t in _hits.get(ip, []) if now - t < 60]
+    if len(q) >= limit: _hits[ip] = q; return False
+    q.append(now); _hits[ip] = q
+    if len(_hits) > 5000: _hits.clear()
+    return True
+
 @web.middleware
 async def auth(req, handler):
     if req.path in ("/", "/health") or _key_ok(req):
+        return await handler(req)
+    if config.PUBLIC_READ and req.method == "GET":
+        if not _rate_ok(req): return web.json_response({"error": "rate limited"}, status=429)
         return await handler(req)
     return web.json_response({"error": "unauthorized"}, status=401)
 

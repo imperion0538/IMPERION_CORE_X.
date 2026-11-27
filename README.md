@@ -14,6 +14,7 @@ REST (5 dk): Binance, Bybit, OKX, Bitget, Gate, Hyperliquid, Deribit OI/funding/
 |---|---|
 | `DATABASE_URL` | PostgreSQL bağlantısı |
 | `API_KEY` | `/api/*` uçları için anahtar (`X-API-Key` başlığı) |
+| `PUBLIC_READ` | `1` ise `/api/*` okuma uçları anahtarsız açılır, IP başına dakikada 60 istek |
 | `TELEGRAM_BOT_TOKEN` | Bot token'ı |
 | `TELEGRAM_CHAT_ID` | Komut ve alarm alacak sohbet kimlikleri (virgülle) |
 | `COINS` | Varsayılan `BTC,ETH,SOL` |
