@@ -45,7 +45,7 @@ def _header_bar(fig, x, y, w, h, text, fc=GREEN, size=22):
 
 
 def _label(ax, x, y, text, fc, ec, size=13, ha="center", color=INK):
-    ax.text(x, y, text, ha=ha, va="center", fontsize=size, color=color, fontweight="bold", zorder=6,
+    return ax.text(x, y, text, ha=ha, va="center", fontsize=size, color=color, fontweight="bold", zorder=6,
             bbox=dict(boxstyle="round,pad=0.35", fc=fc, ec=ec, lw=1.6))
 
 
@@ -76,32 +76,37 @@ def _chart(fig, rect, cs, res, tf, tag, tag_fc, extra):
     inside = lambda v: lo - pad < v < hi + pad
     right = len(cs) + 5.5
 
+    pending = []  # (x tercihi, y, metin, dolgu, kenar, boyut) — çakışma kontrolüyle en sona yerleştirilir
+
     def band(z, fc, label, lfc, lec, xpos=None):
         if not (inside(z[0]) or inside(z[1])):
             return
         ax.axhspan(z[0], z[1], color=fc, alpha=0.55, zorder=1)
         if label:
-            _label(ax, xpos if xpos is not None else len(cs) * 0.55, (z[0] + z[1]) / 2, label, lfc, lec)
+            pending.append((xpos if xpos is not None else len(cs) * 0.45, (z[0] + z[1]) / 2, label, lfc, lec, 13))
 
     band(res["major_res"], RED_L, f"Majör Direnç Bölgesi\n{tr_num(res['major_res'][0])} – {tr_num(res['major_res'][1])}", RED_L, RED, len(cs) * 0.45)
-    bsl = res["liq"]["bsl"]
-    if bsl:
-        z = (bsl[0], bsl[1]) if bsl[1] - bsl[0] > price * 0.0008 else ta.zone(bsl[0], 0.08)
-        band(z, RED_L, f"Likidite (BSL)\n{tr_num(z[0])} – {tr_num(z[1])}", RED_L, RED, len(cs) * 0.36)
-    band(res["support"], GREEN_L, f"Yakın Destek / Talep\n{tr_num(res['support'][0])} – {tr_num(res['support'][1])}", GREEN_L, GREEN, len(cs) * 0.50)
     o = res["ote"]
     if o:
         lbl = "Bullish OTE / olası long indirim" if o["side"] == "long" else "Bearish OTE / olası short premium"
         band(o["zone"], GREEN_L if o["side"] == "long" else RED_L,
              f"{lbl}\n{tr_num(o['zone'][0])} – {tr_num(o['zone'][1])} (0,705 = {tr_num(o['levels'][0.705])})",
              GREEN_L if o["side"] == "long" else RED_L, GREEN if o["side"] == "long" else RED, len(cs) * 0.25)
+    bsl = res["liq"]["bsl"]
+    if bsl:
+        z = (bsl[0], bsl[1]) if bsl[1] - bsl[0] > price * 0.0008 else ta.zone(bsl[0], 0.08)
+        band(z, RED_L, f"Likidite (BSL)\n{tr_num(z[0])} – {tr_num(z[1])}", RED_L, RED, len(cs) * 0.55)
+    band(res["support"], GREEN_L, f"Yakın Destek / Talep\n{tr_num(res['support'][0])} – {tr_num(res['support'][1])}", GREEN_L, GREEN, len(cs) * 0.55)
     ssl = res["liq"]["ssl"]
     if ssl and inside(ssl[0]):
         ax.axhline(ssl[0], color=SUB, linestyle=":", linewidth=2, zorder=2)
-        _label(ax, len(cs) * 0.35, ssl[0], f"Likidite (SSL) {tr_num(ssl[0])}", "#f3f4f6", SUB, 12)
+        pending.append((len(cs) * 0.3, ssl[0], f"Likidite (SSL) {tr_num(ssl[0])}", "#f3f4f6", SUB, 12))
     if inside(res["local_low"]):
         ax.axhline(res["local_low"], color=INK, linestyle=":", linewidth=1.6, zorder=2)
-        _label(ax, len(cs) * 0.15, res["local_low"], f"Lokal Dip {tr_num(res['local_low'])}", "white", INK, 12)
+        pending.append((len(cs) * 0.15, res["local_low"], f"Lokal Dip {tr_num(res['local_low'])}", "white", INK, 12))
+    st = res["structure"]
+    if st["choch"]:
+        pending.append((len(cs) * 0.12, lo + (hi - lo) * 0.85, f"{tf} {'bullish' if st['choch'] == 'bullish' else 'bearish'} CHoCH adayı\n(teyit bekleniyor)", "white", INK, 12))
     gap = (hi - lo + 2 * pad) * 0.04  # etiketler arası en az dikey boşluk (veri birimi)
     labels = []
     for kind in ("liq", "wall"):
@@ -119,15 +124,33 @@ def _chart(fig, rect, cs, res, tf, tag, tag_fc, extra):
     labels.sort(key=lambda l: l[0])
     for i in range(1, len(labels)):  # üst üste binenleri yukarı it
         if labels[i][0] - labels[i - 1][0] < gap: labels[i][0] = labels[i - 1][0] + gap
+    renderer = fig.canvas.get_renderer()
+    placed = []
+
+    def extent(t):
+        bb = t.get_window_extent(renderer)
+        return bb.expanded(1.0, 1.0).padded(14)
+
     for y, text, col in labels:
-        ax.text(len(cs) - 0.5, y, text, color=col, fontsize=12, fontweight="bold", va="center", ha="right", zorder=8,
-                bbox=dict(boxstyle="round,pad=0.25", fc="white", ec=col, lw=1, alpha=0.92))
+        t = ax.text(len(cs) - 0.5, y, text, color=col, fontsize=12, fontweight="bold", va="center", ha="right", zorder=8,
+                    bbox=dict(boxstyle="round,pad=0.25", fc="white", ec=col, lw=1, alpha=0.92))
+        placed.append(extent(t))
+    # bölge etiketleri: tercih edilen x'ten başlayarak çakışmayan ilk konuma yerleşir
+    fracs = (0.12, 0.24, 0.36, 0.48, 0.60, 0.72)
+    for xpref, y, text, lfc, lec, size in pending:
+        best = None
+        for xc in [xpref] + [len(cs) * f for f in fracs]:
+            t = _label(ax, xc, y, text, lfc, lec, size)
+            bb = extent(t)
+            if not any(bb.overlaps(p) for p in placed):
+                best = (t, bb); break
+            t.remove()
+        if best is None:  # hiçbir konum boş değilse tercih edilen yere koy
+            t = _label(ax, xpref, y, text, lfc, lec, size); best = (t, extent(t))
+        placed.append(best[1])
     ax.axhline(price, color=ORANGE, linewidth=1.4, zorder=2)
     ax.text(right, price, f" {tr_num(price, 2)} ", color="white", fontsize=15, fontweight="bold", va="center", ha="left", zorder=7,
             bbox=dict(boxstyle="square,pad=0.25", fc=ORANGE, ec=ORANGE), clip_on=False)
-    st = res["structure"]
-    if st["choch"]:
-        _label(ax, len(cs) * 0.12, lo + (hi - lo) * 0.85, f"{tf} {'bullish' if st['choch'] == 'bullish' else 'bearish'} CHoCH adayı\n(teyit bekleniyor)", "white", INK, 12)
     ax.yaxis.tick_right(); ax.tick_params(axis="y", labelsize=14, colors=INK); ax.tick_params(axis="x", labelbottom=False, length=0)
     ax.yaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda v, _: tr_num(v, 2)))
     for s in ax.spines.values(): s.set_visible(False)
