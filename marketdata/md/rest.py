@@ -111,7 +111,10 @@ async def options_summary(c):
                 "greeks": result.get("greeks"), "mark_iv": result.get("mark_iv")}
 
     largest = sorted(chain, key=lambda row: -row["oi"])[:6]
-    exchange_greeks = await asyncio.gather(*(_safe("Deribit ticker", ticker(row)) for row in largest))
+    exchange_greeks = []
+    for row in largest:
+        exchange_greeks.append(await _safe("Deribit ticker", ticker(row)))
+        await asyncio.sleep(0.35)
     now_ms = int(time.time() * 1000)
     dv = (await http.get("https://www.deribit.com/api/v2/public/get_volatility_index_data",
                          {"currency": c, "start_timestamp": now_ms - 2 * 86400000, "end_timestamp": now_ms, "resolution": 3600}))["result"]["data"]
