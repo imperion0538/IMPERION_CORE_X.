@@ -3,7 +3,7 @@ import asyncio, json, logging, time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 import aiohttp
-from . import analysis, card4k, charts, config, db, fmt, heatmap, http, orderbook, state, whales
+from . import analysis, card4k, charts, config, db, fmt, heatmap, http, reports, orderbook, state, whales
 
 log = logging.getLogger("telegram")
 API = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}"
@@ -19,7 +19,11 @@ async def send(chat, text):
             log.warning("sendMessage %s: %s", r.status, body[:300])
         if r.status == 400:
             async with s.post(f"{API}/sendMessage", json={"chat_id": chat, "text": fmt.strip_html(part), "disable_web_page_preview": True}) as r2:
-                if r2.status != 200: log.warning("sendMessage düz metin %s", r2.status)
+                if r2.status == 200:
+                    continue
+                log.warning("sendMessage düz metin %s", r2.status)
+        return False
+    return True
 
 async def photo(chat, png, caption, document=False):
     s = await http.session()
@@ -99,6 +103,11 @@ async def handle(chat, text):
     if cmd in ("/btc", "/eth", "/sol") or cmd == "/analiz":
         coin = cmd[1:].upper() if cmd != "/analiz" else _args(rest, "24h")[0]
         return await send(chat, fmt.analysis_text(await analysis.analysis(coin)))
+    if cmd == "/arastirma":
+        coin = _args(rest, "15m")[0]
+        if coin not in config.COINS:
+            return await send(chat, f"{coin} canlı izlenmiyor.")
+        return await send(chat, reports.format_report_text(await reports.generate_report(coin)))
     if cmd == "/kart":
         if rest and rest[0].lower() in ("arsiv", "arşiv"):
             return await send_card(chat)
@@ -185,6 +194,9 @@ async def handle(chat, text):
         o = await analysis.options(coin)
         if not o: return await send(chat, f"{coin} için opsiyon verisi yok (yalnız BTC, ETH).")
         L = [f"<b>{coin} opsiyonlar (Deribit)</b> · OI {fmt.usd(o['oi_usd'])} · put/call {o['put_call']:.2f} · DVOL {o['dvol'] or 0:.1f} (24s önce {o['dvol_24h_ago'] or 0:.1f})"]
+        if o.get("snapshot_utc"):
+            L.append(f"Veri zamanı: {o['snapshot_utc']} · {o['age_seconds'] // 60} dk önce"
+                     + (" · güncel değil" if o["stale"] else ""))
         for e in o["expiries"]:
             L.append(f"{e['expiry']}: OI {fmt.usd(e['oi_usd'])} · max pain ${e['max_pain']:,.0f} · P/C {e['put_call']:.2f}")
             if "max_pain_payout_usd" in e:
@@ -288,6 +300,7 @@ async def options_alerts():
     if not (config.TELEGRAM_BOT_TOKEN and config.TELEGRAM_CHAT_IDS and config.ALERTS_ENABLED):
         return
     seen = {}
+    pending = {}
     while True:
         async with db.pool.acquire() as conn:
             for coin in (c for c in config.COINS if c in ("BTC", "ETH")):
@@ -320,7 +333,21 @@ async def options_alerts():
                             and min(abs(a), abs(b)) >= config.OPTIONS_GEX_FLIP_MIN_USD):
                         notices.append(f"{e['expiry']} imzalı GEX tahmini: {fmt.usd(b)} → {fmt.usd(a)} / %1")
                 if notices:
-                    await broadcast(f"<b>🗼 {coin} opsiyon alarmı · Deribit</b>\n" + "\n".join(notices))
+                    message = f"<b>🗼 {coin} opsiyon alarmı · Deribit</b>\n" + "\n".join(notices)
+                    pending[(coin, rows[0]["ts"])] = (message, set(config.TELEGRAM_CHAT_IDS))
+        for key, (message, chats) in list(pending.items()):
+            _, snapshot = key
+            if (datetime.now(timezone.utc) - snapshot).total_seconds() > 2700:
+                del pending[key]
+                continue
+            for chat in tuple(chats):
+                try:
+                    if await send(chat, message):
+                        chats.remove(chat)
+                except (aiohttp.ClientError, asyncio.TimeoutError):
+                    log.warning("Opsiyon alarmı yeniden denenecek")
+            if not chats:
+                del pending[key]
         await asyncio.sleep(60)
 
 

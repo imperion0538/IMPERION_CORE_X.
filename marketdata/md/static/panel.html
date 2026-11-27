@@ -71,7 +71,10 @@ async function load() {
   $("img-cvd").src = "api/cvd.png?coin=" + coin + "&hours=24&t=" + t;
   $("img-liq").src = "api/liquidations.png?coin=" + coin + "&window=" + win + "&t=" + t;
   try {
-    const a = await (await fetch("api/analysis?coin=" + coin)).json();
+    const [a, report] = await Promise.all([
+      fetch("api/analysis?coin=" + coin).then(r => r.json()),
+      fetch("api/report?coin=" + coin).then(r => r.ok ? r.json() : null).catch(() => null),
+    ]);
     $("ts").textContent = a.generated_utc + " UTC";
     $("price").textContent = "$" + a.price.toLocaleString("en-US", { maximumFractionDigits: 2 });
     const pc = a.price_change_pct;
@@ -92,6 +95,13 @@ async function load() {
     if (a.options && a.options.expiries && a.options.expiries.length) {
       const e = a.options.expiries[0];
       tiles.push(tile("Max pain " + e.expiry, "$" + e.max_pain.toLocaleString("en-US")));
+    }
+    const flow = report?.whale_liquidity;
+    if (flow) {
+      tiles.push(tile("15 dk büyük işlem, spot / perp", usd(flow.by_market.spot.net_usd) + " / " + usd(flow.by_market.perp.net_usd)));
+      const c = flow.coverage;
+      const best = Math.max(0, ...c.sources.map(s => s.observed_minutes));
+      tiles.push(tile("15 dk akış kapsamı", best + "/" + c.expected_minutes + " dk · " + c.sources.length + " kaynak"));
     }
     $("tiles").replaceChildren(...tiles);
     $("summary").replaceChildren(...a.summary.map((s) => { const li = document.createElement("li"); li.textContent = s; return li; }));

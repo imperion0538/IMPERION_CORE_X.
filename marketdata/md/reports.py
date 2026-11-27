@@ -1,110 +1,73 @@
-"""IMPERION Advanced Analysis Reports — live whale liquidity & exchange flow synthesis."""
+"""Kaynak durumu ve fiyat tepkisiyle yapılandırılmış piyasa araştırması."""
 import asyncio
 from datetime import datetime, timezone
-from . import analysis, heatmap, orderbook, whales, config, fmt
+
+from . import analysis, config, fmt, heatmap, orderbook, whales
 
 UTC = timezone.utc
 
-async def generate_report(coin: str = "BTC", focus: str = "whale_liquidity") -> dict:
-    """Generate a structured live analysis report focused on whale liquidity and exchange movements."""
-    coin = coin.upper()
-    if coin not in config.COINS:
-        return {"error": f"{coin} not monitored"}
 
-    # Parallel fetch of core live data
-    a, hm, depth, whale_rep = await asyncio.gather(
-        analysis.analysis(coin),
-        heatmap.model(coin, "4h"),
-        orderbook.latest(coin),
-        whales.report(coin, "15m", limit=10),
-        return_exceptions=True
+def flow_totals(rows):
+    buy = sum(row["buy_usd"] for row in rows)
+    sell = sum(row["sell_usd"] for row in rows)
+    return {"buy_usd": buy, "sell_usd": sell, "net_usd": buy - sell}
+
+
+def nearest(clusters, side):
+    return min((c for c in clusters if c["side"] == side), key=lambda c: abs(c["dist_pct"]), default=None)
+
+
+async def generate_report(coin="BTC", focus="whale_liquidity", window="15m", min_price=None, max_price=None):
+    results = await asyncio.gather(
+        analysis.analysis(coin), heatmap.model(coin, "4h"), orderbook.latest(coin),
+        whales.report(coin, window, min_price, max_price, limit=10), return_exceptions=True,
     )
-
-    report = {
-        "coin": coin,
-        "generated_utc": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
-        "focus": focus,
-        "price": a.get("price") if isinstance(a, dict) else None,
-        "summary": [],
-        "whale_liquidity": {},
-        "exchange_flows": {},
-        "risk_clusters": {},
-        "disclaimer": "Educational research data only. Not investment advice. Heatmap is an estimated model."
-    }
-
-    if isinstance(a, dict):
-        report["summary"] = a.get("summary", [])
-        report["derivatives"] = {
-            "oi_total_usd": a.get("derivatives", {}).get("oi_total_usd"),
-            "funding_ann_pct": a.get("derivatives", {}).get("funding_ann_pct"),
-            "oi_change_4h": a.get("derivatives", {}).get("oi_change_pct", {}).get("4h")
-        }
-        f4 = a.get("flows", {}).get("4h", {})
-        report["exchange_flows"] = {
+    names = ("analysis", "heatmap", "orderbook", "whale_flow")
+    sources = {name: "available" if isinstance(item, dict) else
+               "error" if isinstance(item, Exception) else "missing" for name, item in zip(names, results)}
+    a, hm, depth, flow = (item if isinstance(item, dict) else {} for item in results)
+    f4 = a.get("flows", {}).get("4h", {})
+    result = {
+        "coin": coin, "focus": focus, "generated_utc": datetime.now(UTC).isoformat(),
+        "sources": sources, "price": a.get("price"), "analysis_utc": a.get("generated_utc"),
+        "summary": a.get("summary", []), "price_structure": a.get("price_structure"),
+        "derivatives": a.get("derivatives"), "options": a.get("options"),
+        "exchange_flows": {
             "cvd_spot": f4.get("cvd", {}).get("spot", {}).get("delta"),
             "cvd_perp": f4.get("cvd", {}).get("perp", {}).get("delta"),
             "whales_net_4h": f4.get("whales", {}).get("net_usd"),
-            "liquidations_4h": {
-                "long": f4.get("liquidations", {}).get("long"),
-                "short": f4.get("liquidations", {}).get("short")
-            }
-        }
-
-    if isinstance(hm, dict):
-        report["risk_clusters"] = {
-            "nearest_long": next((c for c in hm.get("clusters", []) if c["side"] == "long"), None),
-            "nearest_short": next((c for c in hm.get("clusters", []) if c["side"] == "short"), None),
-            "venues_used": hm.get("venues_used")
-        }
-
-    if isinstance(whale_rep, dict):
-        report["whale_liquidity"] = {
-            "window": "15m",
-            "net_usd": whale_rep.get("net_usd"),
-            "buy_usd": whale_rep.get("buy_usd"),
-            "sell_usd": whale_rep.get("sell_usd"),
-            "recent_trades": whale_rep.get("trades", [])[:5]
-        }
-
-    if isinstance(depth, dict):
-        b1 = depth.get("bands", {}).get("1", {})
-        report["orderbook_imbalance"] = {
-            "bid_usd": b1.get("bid_usd"),
-            "ask_usd": b1.get("ask_usd"),
-            "imbalance": b1.get("imbalance")
-        }
-
-    return report
+            "liquidations_4h": f4.get("liquidations"), "coverage": f4.get("coverage"),
+        },
+        "risk_clusters": {
+            "estimated": True, "nearest_long": nearest(hm.get("clusters", []), "long"),
+            "nearest_short": nearest(hm.get("clusters", []), "short"),
+            "venues_used": hm.get("venues_used"), "generated_utc": hm.get("generated_utc"),
+        },
+        "orderbook_imbalance": {**depth.get("bands", {}).get("1", {}), "ts": depth.get("ts"),
+                                "venues": depth.get("sources")} if depth else None,
+    }
+    if flow:
+        rows = flow["by_venue_market"]
+        result["whale_liquidity"] = {**flow, **flow_totals(rows),
+                                    "recent_trades": flow["trades"][:5],
+                                    "by_market": {market: flow_totals([r for r in rows if r["market"] == market])
+                                                  for market in ("spot", "perp")}}
+    else:
+        result["whale_liquidity"] = None
+    return result
 
 
-def format_report_text(report: dict) -> str:
-    """Turn structured report into Telegram-friendly text."""
-    if "error" in report:
-        return report["error"]
-    lines = [
-        f"<b>IMPERION LIVE REPORT · {report['coin']}</b>",
-        f"{report['generated_utc']} UTC",
-        "",
-        f"Price: ${report.get('price', 0):,.0f}" if report.get("price") else "",
-    ]
-    lines += [f"• {s}" for s in report.get("summary", [])[:6]]
-    wl = report.get("whale_liquidity", {})
-    if wl:
-        lines.append(f"\n<b>Whale Liquidity (15m)</b>")
-        lines.append(f"Net {fmt.usd(wl.get('net_usd', 0))} · Buy {fmt.usd(wl.get('buy_usd', 0))} · Sell {fmt.usd(wl.get('sell_usd', 0))}")
-    ef = report.get("exchange_flows", {})
-    if ef:
-        lines.append(f"\n<b>Exchange Flows (4h)</b>")
-        lines.append(f"CVD Spot {fmt.usd(ef.get('cvd_spot', 0))} · Perp {fmt.usd(ef.get('cvd_perp', 0))}")
-        lines.append(f"Whales net {fmt.usd(ef.get('whales_net_4h', 0))}")
-    rc = report.get("risk_clusters", {})
-    if rc.get("nearest_long") or rc.get("nearest_short"):
-        lines.append("\n<b>Nearest Liquidation Clusters</b>")
-        if rc.get("nearest_long"):
-            c = rc["nearest_long"]
-            lines.append(f"Long support ~${c['price']:,.0f} ({c['dist_pct']:+.1f}%)")
-        if rc.get("nearest_short"):
-            c = rc["nearest_short"]
-            lines.append(f"Short resistance ~${c['price']:,.0f} ({c['dist_pct']:+.1f}%)")
-    lines.append(f"\n<i>{report.get('disclaimer', '')}</i>")
+def format_report_text(report):
+    lines = [f"<b>{fmt.escape(report['coin'])} piyasa araştırması</b>",
+             f"Rapor: {report['generated_utc'][11:19]} UTC"]
+    if report["price"] is not None:
+        lines.append(f"Referans fiyat: ${report['price']:,.2f}")
+    lines.extend("• " + fmt.escape(line) for line in report["summary"][:8])
+    if report["whale_liquidity"]:
+        lines.extend(("", fmt.whale_flow_text(report["whale_liquidity"] | {
+            "trades": report["whale_liquidity"]["recent_trades"],
+        })))
+    missing = [name for name, status in report["sources"].items() if status != "available"]
+    if missing:
+        lines.append("Eksik bölümler: " + ", ".join(missing))
     return "\n".join(lines)

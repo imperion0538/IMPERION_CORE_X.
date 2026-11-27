@@ -1,72 +1,100 @@
-# IMPERION CORE X — Advanced Real-Time Market Research System
+# IMPERION Market Data
 
-**Real-time multi-exchange crypto derivatives intelligence: whale liquidity tracking, exchange flows, liquidation heatmaps, CVD, OI/funding, options, and automated analysis reports.**
+Çoklu borsa türev piyasası veri sistemi: likidasyon akışı, tahmini likidasyon ısı haritası, balina akışı ve CVD, long/short, OI, funding, opsiyon verisi; Telegram botu ve analiz API'si. Railway'de (Singapur) çalışır.
 
-This system is a complete, layered ecosystem for continuous market monitoring and research-grade analysis. It focuses exclusively on global crypto markets (Binance, Bybit, OKX, Coinbase, Hyperliquid, Bitget, Gate, Deribit).
+- `marketdata/` — ana servis: toplayıcılar, ısı haritası modeli, analiz, Telegram botu, HTTP API.
 
-## Ecosystem Layers
+## Veri kaynakları
+WebSocket: Binance (perp + spot işlemler, likidasyonlar), Bybit (işlemler, likidasyonlar), OKX (işlemler, likidasyonlar), Coinbase (spot işlemler), Hyperliquid (işlemler).
+REST (5 dk): Binance, Bybit, OKX, Bitget, Gate, Hyperliquid, Deribit OI/funding/long-short. Deribit opsiyonları (15 dk).
+Emir defteri (1 dk): Binance perp + spot, Bybit, OKX (tam derinlik), Coinbase.
 
-### 1. Infrastructure & Operations
-- Single-writer lock for safe deployments
-- Health monitoring of all streams
-- Railway / container ready
-- GitHub Actions CI with PostgreSQL
+Funding oranları her borsanın gerçek ödeme aralığına (1/4/8 saat) göre 8 saatliğe normalize edilir.
 
-### 2. Data Sources & Ingestion
-- **WebSocket (real-time)**: trades + liquidations from Binance (perp+spot), Bybit, OKX, Coinbase, Hyperliquid
-- **REST (periodic)**: OI, funding, long/short ratios, Deribit options
-- **Order book** snapshots every minute
-- Whale detection on large trades
+## Veri bütünlüğü
+Veritabanına yalnızca en son başlayan dağıtım yazabilir (`writer_lock` tablosu ve tetikleyiciler).
+Eski bir süreç kapanmadan çalışmaya devam ederse yazmaları reddedilir; yeni kod kilidi kaybettiğinde kendini kapatır.
 
-### 3. Processing & Event Handling
-- In-memory minute buckets → PostgreSQL
-- Real-time alert queue (liquidations, whales, cascades)
-- Coverage tracking for data quality
+## Ortam değişkenleri
+| Değişken | Açıklama |
+|---|---|
+| `DATABASE_URL` | PostgreSQL bağlantısı |
+| `API_KEY` | `/api/*` uçları için anahtar (`X-API-Key` başlığı) |
+| `PUBLIC_READ` | `1` ise `/api/*` okuma uçları anahtarsız açılır, IP başına dakikada 60 istek |
+| `TELEGRAM_BOT_TOKEN` | Bot token'ı |
+| `TELEGRAM_CHAT_ID` | Komut ve alarm alacak sohbet kimlikleri (virgülle) |
+| `COINS` | Varsayılan `BTC,ETH,SOL` |
+| `WHALE_MIN_USD` | Balina eşiği, varsayılan 250000 (altcoinlerde ×0.4) |
+| `ALERT_LIQ_USD`, `ALERT_CASCADE_USD`, `ALERT_WHALE_USD` | Alarm eşikleri |
+| `REPORT_HOURS_UTC` | Zamanlı BTC raporu saatleri, örn. `5,13,21` |
 
-### 4. Storage
-- PostgreSQL with retention policies
-- Tables: trades_1m, liquidations, whale_trades, deriv_snap, options_snap, depth_snap
-- Writer lock prevents concurrent writers
+## Web paneli
+`/panel` — fiyat, OI, funding, likidasyon, balina, CVD, Coinbase primi, emir defteri dengesizliği, opsiyon özetiyle
+tahmini likidasyon ısı haritası, emir defteri ısı haritası, CVD ve gerçekleşen likidasyon grafikleri. 60 sn'de bir yenilenir.
 
-### 5. Analytics & Features
-- Estimated liquidation heatmap (OI-based model + leverage distribution)
-- Realized liquidations by price band
-- CVD (spot vs perp)
-- Whale flow with price reaction
-- Options: max pain, GEX, Greeks, DVOL
-- Order book imbalance & walls
-- Altcoin correlation / beta
-- Price structure (range analysis)
+## API
+`/health`, `/api/analysis?coin=BTC`, `/api/heatmap?coin=BTC&window=1h|4h|24h|7d|30d`, `/api/heatmap.png`, `/api/liquidations`, `/api/whales`, `/api/derivatives`, `/api/options`, `/api/alts`, `/api/cvd`.
 
-### 6. Intelligence / Research Layer
-- Structured analysis engine producing live summaries
-- Automated report generation focused on whale liquidity and exchange movements
-- Multi-source synthesis (flows + derivatives + options + orderbook)
-- Telegram-delivered analysis reports and alerts
+Emir defteri ve grafikler: `/api/depth?coin=BTC` (bantlar, dengesizlik, duvarlar), `/api/orderbook.png?coin=BTC&hours=4`,
+`/api/cvd.png?coin=BTC&hours=24`, `/api/liquidations.png?coin=BTC&window=24h`, `/api/card.png?coin=BTC` (canlı analiz kartı), `/api/coins`.
 
-### 7. Delivery & User Interface
-- HTTP API (analysis, heatmap, whales, CVD, options, depth, PNG charts)
-- Telegram bot with commands and real-time alerts
-- Static web panel
-- High-resolution analysis cards (including 4K)
+## Telegram komutları
+`/btc`, `/eth`, `/sol`, `/analiz COIN` — tam analiz · `/kart [COIN]` — canlı analiz kartı (1920×1080), `/kart arsiv` — 26.11 tarihli 4K kart ·
+`/isi [COIN] [1s|4s|24s|7g|30g]` · `/likidasyon` · `/balina` · `/akis` · `/oi` · `/ls` · `/opsiyon` · `/altlar` ·
+`/derinlik [COIN]` — emir defteri derinliği ve duvarlar · `/defter [COIN] [1s|4s|24s]` — emir defteri ısı haritası ·
+`/cvd [COIN] [4s|24s|7g]` — spot/perp CVD grafiği · `/durum` — akış sağlığı.
 
-## Key Capabilities
-- **Whale Liquidity & Exchange Movements**: Real-time tracking of large trades across venues, net flow, price reaction, cascade detection.
-- **Live Analysis Reports**: On-demand and scheduled reports synthesizing all layers into actionable (non-advice) market context.
-- **Multi-venue Aggregation**: Normalized funding, combined OI, cross-exchange liquidations and CVD.
-
-## Environment Variables
-See original for full list. Core: `DATABASE_URL`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `COINS`, `API_KEY`, alert thresholds.
-
-## Running
-```bash
-cd marketdata
-pip install -r requirements.txt
-# Set env vars, then:
-python main.py
+## Geliştirme
 ```
+cd marketdata
+pip install -r requirements.txt -r requirements-dev.txt
+python -m pytest -q            # TEST_DATABASE_URL verilirse veritabanı kilidi testi de çalışır
+```
+GitHub Actions her push ve PR'da testleri PostgreSQL 16 ile çalıştırır.
 
 Isı haritası tahmini bir modeldir; veriler yatırım tavsiyesi değildir.
 
----
-Built on the original IMPERION Market Data pipeline, evolved into a full research ecosystem focused on real-time whale liquidity and exchange flow intelligence.
+### Büyük işlem akışı ve fiyat tepkisi
+
+`GET /api/whale-flow?coin=BTC&window=15m&min_price=61000&max_price=62500&limit=20`
+borsa ve piyasa türü bazında agresif alış/satış toplamlarını ve en son işlemleri
+döndürür. Fiyat sınırları isteğe bağlıdır. Pencereler: `5m`, `15m`, `1h`, `4h`.
+Telegram örneği: `/akis BTC 15m 61000 62500`.
+
+Kapsam, her kaynak için veri gözlenen kapalı dakikaların sayısıdır.
+Olay listesi mevcut dakikadaki işlemleri de içerir. Fiyat tepkisi,
+işlem fiyatından aynı borsa ve piyasanın 1, 5 ve 15 dakika sonraki dakika
+kovası kapanışına yüzde değişimdir. Kova henüz kapanmamış veya eksikse
+değer `null` kalır. Büyük işlem verisi katılımcı kimliği veya pozisyon açma/kapama
+bilgisi içermez.
+
+`/api/analysis` akış pencerelerinde borsa ve piyasa bazında gözlenen dakika
+sayısını raporlar. `/health` süreç durumuna ek olarak `data_status` ve
+`stale_streams` alanlarını döndürür.
+
+### Telegram 4K kartı ve opsiyon analizi
+
+`/kart arsiv`, 26 Kasım 2026 15:54 TSİ BTC kartını özgün 3840 × 2160
+boyutuyla Telegram belgesi olarak gönderir (`/kart` artık canlı kart üretir). Kart, bu sürümde yapılandırılmış
+Telegram sohbetlerine bir kez otomatik gönderilir.
+
+`/opsiyon BTC` ve `/api/options?coin=BTC`, Deribit vadeleri için strike
+bazında açık pozisyon, USD içsel ödeme eğrisi ve max pain seviyesini gösterir.
+Greeks, zincir genelinde mark IV ve forward fiyatından Black-76 ile hesaplanır.
+En yüksek OI'lı dört kontrat için Deribit ticker Greeks değerleri ayrıca
+`exchange_greeks` alanında bulunur. Greeks model kapsamı OI yüzdesiyle verilir.
+
+GEX, %1 fiyat hareketi başına yaklaşık USD duyarlılığıdır. İmzalı GEX
+call pozitif / put negatif varsayımını kullanır. Piyasa yapıcı yönü bilinmez.
+Opsiyon alarmları yeni snapshot'ları karşılaştırır. Eşikler:
+`OPTIONS_DVOL_CHANGE` (3 puan), `OPTIONS_MAX_PAIN_CHANGE_PCT` (%2),
+`OPTIONS_GEX_FLIP_MIN_USD` (1 milyon USD, işaret değişiminin her iki tarafında).
+
+### Piyasa araştırma raporu
+
+`/api/report?coin=BTC&window=15m&min_price=61000&max_price=62500`,
+seçilen fiyat bölgesindeki büyük işlemleri spot/perp ayrımı ve işlem sonrası
+fiyat tepkileriyle sunar. Rapor, veri kapsamı ile kaynak durumunu da içerir.
+Telegram'da `/arastirma BTC` komutunu kullanabilirsin.
+4K kartın teknik yapısı kapanmış mumlardan hesaplanır. Opsiyon API'si
+son kayıt saatini ve 30 dakikayı aşan kayıtlar için eskime durumunu gösterir.
