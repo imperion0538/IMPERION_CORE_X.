@@ -66,14 +66,14 @@ function tile(k, v, c) {
 }
 async function load() {
   const coin = $("coin").value || "BTC", win = $("win").value, t = Date.now();
-  $("img-heat").src = "api/heatmap.png?coin=" + coin + "&window=" + win + "&t=" + t;
-  $("img-ob").src = "api/orderbook.png?coin=" + coin + "&hours=4&t=" + t;
-  $("img-cvd").src = "api/cvd.png?coin=" + coin + "&hours=24&t=" + t;
-  $("img-liq").src = "api/liquidations.png?coin=" + coin + "&window=" + win + "&t=" + t;
+  $("img-heat").src = "/api/heatmap.png?coin=" + coin + "&window=" + win + "&t=" + t;
+  $("img-ob").src = "/api/orderbook.png?coin=" + coin + "&hours=4&t=" + t;
+  $("img-cvd").src = "/api/cvd.png?coin=" + coin + "&hours=24&t=" + t;
+  $("img-liq").src = "/api/liquidations.png?coin=" + coin + "&window=" + win + "&t=" + t;
   try {
     const [a, report] = await Promise.all([
-      fetch("api/analysis?coin=" + coin).then(r => r.json()),
-      fetch("api/report?coin=" + coin).then(r => r.ok ? r.json() : null).catch(() => null),
+      fetch("/api/analysis?coin=" + coin).then(r => r.json()),
+      fetch("/api/report?coin=" + coin).then(r => r.ok ? r.json() : null).catch(() => null),
     ]);
     $("ts").textContent = a.generated_utc + " UTC";
     $("price").textContent = "$" + a.price.toLocaleString("en-US", { maximumFractionDigits: 2 });
@@ -111,7 +111,7 @@ async function load() {
 }
 (async () => {
   try {
-    const c = await (await fetch("api/coins")).json();
+    const c = await (await fetch("/api/coins")).json();
     $("coin").replaceChildren(...c.coins.map((x) => new Option(x, x)));
   } catch (e) {
     $("coin").replaceChildren(new Option("BTC", "BTC"));

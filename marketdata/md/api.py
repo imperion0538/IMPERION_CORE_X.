@@ -126,6 +126,18 @@ async def classic_panel(req):
 
 async def coins(req): return j({"coins": config.COINS})
 
+async def dashboard_tickers(req):
+    now = time.time()
+    items = {}
+    for coin in config.COINS:
+        quote = state.last_price.get(("binance", "perp", coin))
+        if quote and 0 <= now - quote[1] <= 120:
+            items[coin] = {"price": quote[0], "age_seconds": round(now - quote[1], 1),
+                           "source": "Binance USD-M perpetual"}
+        else:
+            items[coin] = {"price": None, "age_seconds": None, "source": "unavailable"}
+    return j(items)
+
 async def dashboard_candles(req):
     coin, frame = _coin(req), req.query.get("frame", "15m")
     if coin not in config.COINS or frame not in ("15m", "1h", "4h"):
@@ -183,7 +195,7 @@ def app():
     a.add_routes([web.get("/", health), web.get("/health", health), web.get("/api/analysis", an), web.get("/api/advanced", advanced_report), web.get("/api/options/flow", options_flow), web.get("/api/report", live_report), web.get("/api/heatmap", heat),
                   web.get("/api/heatmap.png", heat_png), web.get("/api/liquidations", liq), web.get("/api/whales", whales), web.get("/api/whale-flow", whale_report),
                   web.get("/api/derivatives", deriv), web.get("/api/options", opts), web.get("/api/alts", alts), web.get("/api/cvd", cvd),
-                  web.get("/panel", panel), web.get("/panel/classic", classic_panel), web.get("/api/candles", dashboard_candles), web.get("/api/coins", coins), web.get("/api/depth", depth), web.get("/api/orderbook.png", depth_png),
+                  web.get("/panel", panel), web.get("/panel/classic", classic_panel), web.get("/api/candles", dashboard_candles), web.get("/api/tickers", dashboard_tickers), web.get("/api/coins", coins), web.get("/api/depth", depth), web.get("/api/orderbook.png", depth_png),
                   web.get("/api/cvd.png", cvd_png), web.get("/api/liquidations.png", liq_png), web.get("/api/card.png", card_png),
                   web.get("/api/db-connections", db_conns), web.get("/api/card4k.png", card4k_png)])
     return a
