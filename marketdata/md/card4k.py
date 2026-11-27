@@ -87,8 +87,8 @@ def _chart(fig, rect, cs, res, tf, tag, tag_fc, extra):
     bsl = res["liq"]["bsl"]
     if bsl:
         z = (bsl[0], bsl[1]) if bsl[1] - bsl[0] > price * 0.0008 else ta.zone(bsl[0], 0.08)
-        band(z, RED_L, f"Likidite (BSL)\n{tr_num(z[0])} – {tr_num(z[1])}", RED_L, RED, len(cs) * 0.56)
-    band(res["support"], GREEN_L, f"Yakın Destek / Talep\n{tr_num(res['support'][0])} – {tr_num(res['support'][1])}", GREEN_L, GREEN, len(cs) * 0.62)
+        band(z, RED_L, f"Likidite (BSL)\n{tr_num(z[0])} – {tr_num(z[1])}", RED_L, RED, len(cs) * 0.36)
+    band(res["support"], GREEN_L, f"Yakın Destek / Talep\n{tr_num(res['support'][0])} – {tr_num(res['support'][1])}", GREEN_L, GREEN, len(cs) * 0.50)
     o = res["ote"]
     if o:
         lbl = "Bullish OTE / olası long indirim" if o["side"] == "long" else "Bearish OTE / olası short premium"
