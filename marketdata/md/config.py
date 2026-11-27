@@ -35,3 +35,10 @@ def whale_threshold(coin: str) -> float:
 
 def alert_scale(coin: str) -> float:
     return 1.0 if coin == "BTC" else 0.5
+
+OPTIONS_DVOL_CHANGE = _f("OPTIONS_DVOL_CHANGE", 3)
+OPTIONS_MAX_PAIN_CHANGE_PCT = _f("OPTIONS_MAX_PAIN_CHANGE_PCT", 2)
+OPTIONS_GEX_FLIP_MIN_USD = _f("OPTIONS_GEX_FLIP_MIN_USD", 1_000_000)
+
+# Production Telegram defaults to original full-resolution cards only.
+TELEGRAM_CARD_ONLY = os.environ.get("TELEGRAM_CARD_ONLY", "1") == "1"

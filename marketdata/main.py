@@ -1,9 +1,9 @@
 """IMPERION Market Data: toplayıcıları, Telegram botunu ve API'yi başlatır."""
-import asyncio, logging
+import asyncio, logging, sys
 from aiohttp import web
-from md import api, config, db, rest, telegram, ws
+from md import api, config, db, orderbook, rest, telegram, ws
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+logging.basicConfig(level=logging.INFO, stream=sys.stdout, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 log = logging.getLogger("main")
 
 async def supervise(fn):
@@ -39,6 +39,18 @@ async def selftest():
     except Exception:
         log.exception("SELFTEST analysis hata")
 
+async def writer_watchdog():
+    """Kilidi başka bir süreç (yeni dağıtım) aldıysa bu süreci kapatır; eski süreçler asılı kalmaz."""
+    import os
+    while True:
+        await asyncio.sleep(30)
+        try:
+            if not await db.is_writer():
+                log.warning("aktif yazıcı artık %s değil; süreç kapatılıyor", db.APP_NAME)
+                os._exit(0)
+        except Exception as e:
+            log.warning("yazıcı kontrolü yapılamadı: %s", e)
+
 async def main():
     await db.init()
     async with db.pool.acquire() as c:
@@ -48,7 +60,8 @@ async def main():
     await web.TCPSite(runner, "0.0.0.0", config.PORT).start()
     log.info("API %s portunda; coinler %s", config.PORT, config.COINS)
     asyncio.create_task(selftest())
-    await asyncio.gather(*[supervise(f) for f in ws.ALL + rest.ALL + telegram.ALL])
+    asyncio.create_task(writer_watchdog())
+    await asyncio.gather(*[supervise(f) for f in ws.ALL + rest.ALL + [orderbook.poll] + telegram.ALL])
 
 if __name__ == "__main__":
     asyncio.run(main())

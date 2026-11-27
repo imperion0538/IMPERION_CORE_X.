@@ -2,7 +2,8 @@
 import hmac, json, math, time
 from datetime import timedelta
 from aiohttp import web
-from . import analysis, charts, config, db, heatmap, state, whales as whale_flow
+from pathlib import Path
+from . import advanced, analysis, card4k, charts, config, db, heatmap, orderbook, state, whales as whale_flow, reports
 
 def _key_ok(req):
     if not config.API_KEY: return False
@@ -22,7 +23,7 @@ def _rate_ok(req, limit=60):
 
 @web.middleware
 async def auth(req, handler):
-    if req.path in ("/", "/health") or _key_ok(req):
+    if req.path in ("/", "/health", "/panel") or _key_ok(req):
         return await handler(req)
     if config.PUBLIC_READ and req.method == "GET":
         if not _rate_ok(req): return web.json_response({"error": "rate limited"}, status=429)
@@ -41,12 +42,40 @@ async def health(req):
     return j({"status": "ok", "data_status": data_status, "stale_streams": stale, "streams": {n: {"age_s": int(now - h["last_msg"]), "reconnects": h["reconnects"], "msgs": h["msgs"]} for n, h in state.stream_health.items()}})
 
 async def an(req): return j(await analysis.analysis(_coin(req)))
+
+async def advanced_report(req):
+    coin = _coin(req)
+    if coin not in config.COINS:
+        return web.json_response({"error": "Invalid monitored coin"}, status=400)
+    return j(await advanced.research(coin))
+
+async def options_flow(req):
+    coin = _coin(req)
+    if coin not in config.COINS:
+        return web.json_response({"error": "Invalid monitored coin"}, status=400)
+    return j(await advanced.option_flow(coin))
+async def live_report(req):
+    coin, window = _coin(req), _win(req, "15m")
+    if coin not in config.COINS or window not in whale_flow.WINDOWS:
+        return web.json_response({"error": "Invalid monitored coin or window"}, status=400)
+    try:
+        low = float(req.query["min_price"]) if "min_price" in req.query else None
+        high = float(req.query["max_price"]) if "max_price" in req.query else None
+    except ValueError:
+        return web.json_response({"error": "Invalid price range"}, status=400)
+    if (any(v is not None and (not math.isfinite(v) or v <= 0) for v in (low, high))
+            or (low is not None and high is not None and low > high)):
+        return web.json_response({"error": "Invalid price range"}, status=400)
+    return j(await reports.generate_report(coin, window=window, min_price=low, max_price=high))
+
 async def heat(req):
     w = _win(req)
     if w not in heatmap.WINDOWS: return j({"error": f"window şunlardan biri olmalı: {list(heatmap.WINDOWS)}"})
     return j(await heatmap.model(_coin(req), w))
 async def heat_png(req):
-    c, w = _coin(req), _win(req); h = await heatmap.model(c, w)
+    c, w = _coin(req), _win(req)
+    if w not in heatmap.WINDOWS: return web.json_response({"error": f"window şunlardan biri olmalı: {list(heatmap.WINDOWS)}"}, status=400)
+    h = await heatmap.model(c, w)
     return web.Response(body=charts.heatmap_png(h, f"{c} tahmini likidasyon haritası · {w}"), content_type="image/png")
 async def liq(req): return j(await heatmap.realized(_coin(req), _win(req)))
 async def whales(req):
@@ -80,9 +109,59 @@ async def cvd(req):
                              _coin(req), timedelta(seconds=secs))
     return j([{"hour": r["h"], "market": r["market"], "buy_usd": r["b"], "sell_usd": r["s"], "delta": r["b"] - r["s"], "avg_price": r["px"]} for r in rows])
 
+PANEL = Path(__file__).with_name("static") / "panel.html"
+
+
+def _hours(req, d=4, mx=720):
+    try:
+        return max(1, min(mx, int(req.query.get("hours", d))))
+    except ValueError:
+        return d
+
+
+async def panel(req): return web.FileResponse(PANEL, headers={"Cache-Control": "no-cache"})
+async def coins(req): return j({"coins": config.COINS})
+
+
+async def depth(req):
+    d = await orderbook.latest(_coin(req))
+    return j(d) if d else web.json_response({"error": "henüz emir defteri görüntüsü yok"}, status=404)
+
+
+async def depth_png(req):
+    c, h = _coin(req), _hours(req, 4, 24)
+    return web.Response(body=charts.orderbook_heatmap_png(await orderbook.history(c, h), f"{c} emir defteri ısı haritası · son {h} saat"), content_type="image/png")
+
+
+async def cvd_png(req):
+    c, h = _coin(req), _hours(req, 24)
+    return web.Response(body=charts.cvd_png(await analysis.cvd_series(c, h), f"{c} CVD · son {h} saat"), content_type="image/png")
+
+
+async def liq_png(req):
+    c, w = _coin(req), _win(req)
+    return web.Response(body=charts.realized_png(await heatmap.realized(c, w), f"{c} gerçekleşen likidasyonlar · {w}"), content_type="image/png")
+
+
+async def card_png(req):
+    import asyncio
+    c = _coin(req)
+    a, h, d = await asyncio.gather(analysis.analysis(c), heatmap.model(c, "24h"), orderbook.latest(c))
+    return web.Response(body=charts.analysis_card_png(a, h, d), content_type="image/png")
+
+
+async def card4k_png(req):
+    return web.Response(body=await card4k.build(_coin(req)), content_type="image/png")
+
+async def db_conns(req):
+    return j({"self": db.APP_NAME, "connections": await db.connections()})
+
 def app():
     a = web.Application(middlewares=[auth])
-    a.add_routes([web.get("/", health), web.get("/health", health), web.get("/api/analysis", an), web.get("/api/heatmap", heat),
+    a.add_routes([web.get("/", health), web.get("/health", health), web.get("/api/analysis", an), web.get("/api/advanced", advanced_report), web.get("/api/options/flow", options_flow), web.get("/api/report", live_report), web.get("/api/heatmap", heat),
                   web.get("/api/heatmap.png", heat_png), web.get("/api/liquidations", liq), web.get("/api/whales", whales), web.get("/api/whale-flow", whale_report),
-                  web.get("/api/derivatives", deriv), web.get("/api/options", opts), web.get("/api/alts", alts), web.get("/api/cvd", cvd)])
+                  web.get("/api/derivatives", deriv), web.get("/api/options", opts), web.get("/api/alts", alts), web.get("/api/cvd", cvd),
+                  web.get("/panel", panel), web.get("/api/coins", coins), web.get("/api/depth", depth), web.get("/api/orderbook.png", depth_png),
+                  web.get("/api/cvd.png", cvd_png), web.get("/api/liquidations.png", liq_png), web.get("/api/card.png", card_png),
+                  web.get("/api/db-connections", db_conns), web.get("/api/card4k.png", card4k_png)])
     return a
