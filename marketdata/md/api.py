@@ -4,7 +4,7 @@ import asyncio
 from datetime import timedelta
 from aiohttp import web
 from pathlib import Path
-from . import advanced, analysis, card4k, charts, config, db, heatmap, http, orderbook, state, whales as whale_flow, reports
+from . import advanced, analysis, card4k, charts, config, db, heatmap, http, orderbook, state, whales as whale_flow, reports, research, scoring, macro
 
 def _key_ok(req):
     if not config.API_KEY: return False
@@ -68,6 +68,21 @@ async def live_report(req):
             or (low is not None and high is not None and low > high)):
         return web.json_response({"error": "Invalid price range"}, status=400)
     return j(await reports.generate_report(coin, window=window, min_price=low, max_price=high))
+
+async def research_report(req):
+    coin = _coin(req)
+    if coin not in config.COINS:
+        return web.json_response({"error": "Invalid monitored coin"}, status=400)
+    return j(await research.run_research(coin))
+
+async def macro_data(req):
+    return j(await macro.latest_macro())
+
+async def scores(req):
+    coin = _coin(req)
+    if coin not in config.COINS:
+        return web.json_response({"error": "Invalid monitored coin"}, status=400)
+    return j(await scoring.compute_scores(coin))
 
 async def heat(req):
     w = _win(req)
@@ -192,7 +207,9 @@ async def db_conns(req):
 
 def app():
     a = web.Application(middlewares=[auth])
-    a.add_routes([web.get("/", health), web.get("/health", health), web.get("/api/analysis", an), web.get("/api/advanced", advanced_report), web.get("/api/options/flow", options_flow), web.get("/api/report", live_report), web.get("/api/heatmap", heat),
+    a.add_routes([web.get("/", health), web.get("/health", health), web.get("/api/analysis", an), web.get("/api/advanced", advanced_report), web.get("/api/options/flow", options_flow), web.get("/api/report", live_report),
+                  web.get("/api/research", research_report), web.get("/api/macro", macro_data), web.get("/api/scores", scores),
+                  web.get("/api/heatmap", heat),
                   web.get("/api/heatmap.png", heat_png), web.get("/api/liquidations", liq), web.get("/api/whales", whales), web.get("/api/whale-flow", whale_report),
                   web.get("/api/derivatives", deriv), web.get("/api/options", opts), web.get("/api/alts", alts), web.get("/api/cvd", cvd),
                   web.get("/panel", panel), web.get("/panel/classic", classic_panel), web.get("/api/candles", dashboard_candles), web.get("/api/tickers", dashboard_tickers), web.get("/api/coins", coins), web.get("/api/depth", depth), web.get("/api/orderbook.png", depth_png),
