@@ -1,0 +1,168 @@
+"""Telegram botu: komutlar (long polling), alarmlar ve isteğe bağlı zamanlı raporlar."""
+import asyncio, logging, time
+from datetime import datetime, timezone, timedelta
+import aiohttp
+from . import analysis, charts, config, db, fmt, heatmap, http, state
+
+log = logging.getLogger("telegram")
+API = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}"
+WMAP = {"1s": "1h", "4s": "4h", "24s": "24h", "7g": "7d", "30g": "30d", "1h": "1h", "4h": "4h", "24h": "24h", "7d": "7d", "30d": "30d"}
+
+async def send(chat, text):
+    s = await http.session()
+    for i in range(0, len(text), 3900):
+        async with s.post(f"{API}/sendMessage", json={"chat_id": chat, "text": text[i:i + 3900], "parse_mode": "HTML", "disable_web_page_preview": True}) as r:
+            if r.status != 200: log.warning("sendMessage %s: %s", r.status, await r.text())
+
+async def photo(chat, png, caption):
+    s = await http.session()
+    form = aiohttp.FormData(); form.add_field("chat_id", str(chat)); form.add_field("caption", caption[:1000]); form.add_field("parse_mode", "HTML")
+    form.add_field("photo", png, filename="chart.png", content_type="image/png")
+    async with s.post(f"{API}/sendPhoto", data=form) as r:
+        if r.status != 200: log.warning("sendPhoto %s: %s", r.status, await r.text())
+
+def _args(parts, default_window):
+    coin, window = "BTC", default_window
+    for p in parts:
+        p2 = p.lower()
+        if p2 in WMAP: window = WMAP[p2]
+        elif p.upper() in config.COINS or p.upper().isalpha(): coin = p.upper()
+    return coin, window
+
+async def handle(chat, text):
+    parts = text.strip().split(); cmd = parts[0].split("@")[0].lower(); rest = parts[1:]
+    if cmd in ("/start", "/yardim", "/help"):
+        return await send(chat, fmt.HELP)
+    if cmd in ("/btc", "/eth", "/sol") or cmd == "/analiz":
+        coin = cmd[1:].upper() if cmd != "/analiz" else _args(rest, "24h")[0]
+        if coin not in config.COINS: return await send(chat, f"{coin} izlenmiyor. İzlenenler: {', '.join(config.COINS)}")
+        return await send(chat, fmt.analysis_text(await analysis.analysis(coin)))
+    if cmd == "/isi":
+        coin, w = _args(rest, "24h")
+        h = await heatmap.model(coin, w)
+        cap = f"<b>{coin} tahmini likidasyon ısı haritası · {w}</b>\n" + "\n".join(
+            f"{'🔴 Long' if c['side']=='long' else '🟢 Short'} ${c['price']:,.0f} ({c['dist_pct']:+.1f}%) {fmt.usd(c['usd'])}" for c in sorted(h["clusters"], key=lambda c: -c["price"]))
+        return await photo(chat, charts.heatmap_png(h, f"{coin} tahmini likidasyon haritası · {w} · {h['generated_utc']} UTC"), cap)
+    if cmd == "/likidasyon":
+        coin, w = _args(rest, "24h")
+        r = await heatmap.realized(coin, w)
+        byv = " · ".join(f"{v}: L {fmt.usd(x.get('long',0))} S {fmt.usd(x.get('short',0))}" for v, x in r["by_venue"].items())
+        cap = f"<b>{coin} gerçekleşen likidasyonlar · {w}</b>\nLong {fmt.usd(r['total_long'])} · Short {fmt.usd(r['total_short'])}\n{byv}"
+        return await photo(chat, charts.realized_png(r, f"{coin} gerçekleşen likidasyonlar · {w}"), cap)
+    if cmd == "/balina":
+        coin, w = _args(rest, "4h")
+        secs = {"1h": 3600, "4h": 14400, "24h": 86400, "7d": 604800, "30d": 2592000}[w]
+        async with db.pool.acquire() as c:
+            rows = await c.fetch("SELECT ts, venue, market, side, price, usd FROM whale_trades WHERE coin=$1 AND ts > now() - $2::interval ORDER BY usd DESC LIMIT 15", coin, timedelta(seconds=secs))
+            agg = await c.fetch("SELECT side, sum(usd) u, count(*) n FROM whale_trades WHERE coin=$1 AND ts > now() - $2::interval GROUP BY side", coin, timedelta(seconds=secs))
+        a = {r["side"]: r for r in agg}
+        b, s_ = a.get("buy"), a.get("sell")
+        L = [f"<b>{coin} balina işlemleri · {w}</b> (eşik {fmt.usd(config.whale_threshold(coin))})",
+             f"Alım {fmt.usd(b['u'] if b else 0)} ({b['n'] if b else 0}) · Satım {fmt.usd(s_['u'] if s_ else 0)} ({s_['n'] if s_ else 0}) · Net {fmt.usd((b['u'] if b else 0) - (s_['u'] if s_ else 0))}", ""]
+        L += [f"{'🟢' if r['side']=='buy' else '🔴'} {r['ts'].strftime('%H:%M')} {r['venue']} {r['market']} {fmt.usd(r['usd'])} @ ${r['price']:,.0f}" for r in rows]
+        return await send(chat, "\n".join(L))
+    if cmd in ("/oi", "/ls"):
+        coin = _args(rest, "24h")[0]
+        d = await analysis.deriv(coin)
+        if cmd == "/oi":
+            L = [f"<b>{coin} OI ve funding</b> · toplam {fmt.usd(d['oi_total_usd'])} · " + " ".join(f"{w} {fmt.pct(x)}" for w, x in d["oi_change_pct"].items())]
+            L += [f"{k}: OI {fmt.usd(v['oi_usd'])} · funding 8s {(v['funding_8h'] or 0)*100:+.4f}%" for k, v in sorted(d["venues"].items(), key=lambda kv: -(kv[1]['oi_usd'] or 0))]
+            L.append(f"OI ağırlıklı funding yıllık {fmt.pct(d['funding_ann_pct'], 1)}")
+        else:
+            L = [f"<b>{coin} long/short oranları</b>"]
+            for k, v in d["venues"].items():
+                xs = [f"{n}={v[n]:.2f}" for n in ("ls_global", "ls_top_account", "ls_top_position", "ls_account", "taker_buy_sell") if n in v]
+                if xs: L.append(f"{k}: " + " · ".join(xs))
+            L.append("1'in üstü: long hesap/pozisyon ağırlığı. taker_buy_sell 1'in üstü: agresif alıcı ağırlığı.")
+        return await send(chat, "\n".join(L))
+    if cmd == "/opsiyon":
+        coin = _args(rest, "24h")[0]
+        o = await analysis.options(coin)
+        if not o: return await send(chat, f"{coin} için opsiyon verisi yok (yalnız BTC, ETH).")
+        L = [f"<b>{coin} opsiyonlar (Deribit)</b> · OI {fmt.usd(o['oi_usd'])} · put/call {o['put_call']:.2f} · DVOL {o['dvol'] or 0:.1f} (24s önce {o['dvol_24h_ago'] or 0:.1f})"]
+        L += [f"{e['expiry']}: OI {fmt.usd(e['oi_usd'])} · max pain ${e['max_pain']:,.0f} · P/C {e['put_call']:.2f}" for e in o["expiries"]]
+        return await send(chat, "\n".join(L))
+    if cmd == "/altlar":
+        rows = await analysis.alts("BTC")
+        L = ["<b>Altcoinler · BTC'ye göre (7 gün, saatlik)</b>", "coin · korelasyon · beta · 24s"]
+        L += [f"{r['coin']}: {r['corr']:.2f} · {r['beta']:.2f} · {fmt.pct(r['chg_24h_pct'])}" for r in rows if r["corr"] is not None]
+        L.append(f"BTC 24s {fmt.pct(rows[0]['base_chg_24h_pct']) if rows else '—'}. Beta 1'in üstü: BTC hareketini büyüterek izliyor.")
+        return await send(chat, "\n".join(L))
+    if cmd == "/durum":
+        now = time.time()
+        L = ["<b>Veri akışları</b>"] + [f"{'✅' if now - h['last_msg'] < 180 else '⚠️'} {n}: son mesaj {int(now - h['last_msg'])} sn önce · yeniden bağlanma {h['reconnects']}" for n, h in sorted(state.stream_health.items())]
+        return await send(chat, "\n".join(L))
+    await send(chat, "Bilinmeyen komut. /yardim yazabilirsin.")
+
+async def poll():
+    if not config.TELEGRAM_BOT_TOKEN:
+        log.warning("TELEGRAM_BOT_TOKEN yok, bot kapalı"); return
+    offset = None
+    s = await http.session()
+    async with s.post(f"{API}/deleteWebhook") as r: await r.read()
+    while True:
+        try:
+            async with s.get(f"{API}/getUpdates", params={"timeout": 50, **({"offset": offset} if offset else {})}, timeout=aiohttp.ClientTimeout(total=70)) as r:
+                data = await r.json()
+            for u in data.get("result", []):
+                offset = u["update_id"] + 1
+                m = u.get("message") or u.get("channel_post")
+                if not m or not m.get("text", "").startswith("/"): continue
+                chat = str(m["chat"]["id"])
+                if config.TELEGRAM_CHAT_IDS and chat not in config.TELEGRAM_CHAT_IDS:
+                    continue
+                if not config.TELEGRAM_CHAT_IDS:
+                    await send(chat, f"Bu sohbetin kimliği: <code>{chat}</code>\nRailway'de TELEGRAM_CHAT_ID değişkenine bunu yaz; bot o zaman komutlara ve alarmlara açılır.")
+                    continue
+                asyncio.create_task(_safe_handle(chat, m["text"]))
+        except Exception as e:
+            log.warning("getUpdates hatası: %s", e); await asyncio.sleep(5)
+
+async def _safe_handle(chat, text):
+    try:
+        await handle(chat, text)
+    except Exception as e:
+        log.exception("komut hatası")
+        await send(chat, f"Komut çalıştırılamadı: {fmt.escape(str(e))[:300]}")
+
+async def broadcast(text):
+    for chat in config.TELEGRAM_CHAT_IDS: await send(chat, text)
+
+async def alerts_loop():
+    if not (config.TELEGRAM_BOT_TOKEN and config.TELEGRAM_CHAT_IDS and config.ALERTS_ENABLED): return
+    last_cascade = {}
+    while True:
+        await asyncio.sleep(60)
+        items = []
+        while state.alerts: items.append(state.alerts.popleft())
+        now = time.time()
+        for c in config.COINS:
+            tot = sum(u for t, cc, u, _ in state.recent_liq if cc == c and now - t < 300)
+            if tot >= config.ALERT_CASCADE_USD * config.alert_scale(c) and now - last_cascade.get(c, 0) > 900:
+                last_cascade[c] = now
+                lg = sum(u for t, cc, u, sd in state.recent_liq if cc == c and now - t < 300 and sd == "long")
+                items.append({"type": "cascade", "coin": c, "usd": tot, "long": lg, "short": tot - lg})
+        if not items: continue
+        L = ["<b>⚡ Alarm</b>"]
+        for a in items[:20]:
+            if a["type"] == "liq":
+                L.append(f"{'🔴' if a['side']=='long' else '🟢'} {a['coin']} {a['venue']} {a['side']} likidasyonu {fmt.usd(a['usd'])} @ ${a['price']:,.0f}")
+            elif a["type"] == "whale":
+                L.append(f"🐋 {a['coin']} {a['venue']} {a['market']} {'alım' if a['side']=='buy' else 'satım'} {fmt.usd(a['usd'])} @ ${a['price']:,.0f}")
+            else:
+                L.append(f"🌊 {a['coin']} likidasyon dalgası (5 dk): {fmt.usd(a['usd'])} · long {fmt.usd(a['long'])} / short {fmt.usd(a['short'])}")
+        await broadcast("\n".join(L))
+
+async def reports_loop():
+    if not (config.TELEGRAM_BOT_TOKEN and config.TELEGRAM_CHAT_IDS and config.REPORT_HOURS_UTC): return
+    sent = None
+    while True:
+        await asyncio.sleep(30)
+        now = datetime.now(timezone.utc)
+        key = (now.date(), now.hour)
+        if now.hour in config.REPORT_HOURS_UTC and now.minute < 5 and sent != key:
+            sent = key
+            try: await broadcast(fmt.analysis_text(await analysis.analysis("BTC")))
+            except Exception as e: log.warning("rapor hatası: %s", e)
+
+ALL = [poll, alerts_loop, reports_loop]
