@@ -29,13 +29,20 @@ def _args(parts, default_window):
         elif p.upper() in config.COINS or p.upper().isalpha(): coin = p.upper()
     return coin, window
 
+LIVE_ONLY = ("/likidasyon", "/balina", "/oi", "/ls", "/analiz")
+
 async def handle(chat, text):
     parts = text.strip().split(); cmd = parts[0].split("@")[0].lower(); rest = parts[1:]
+    if cmd in LIVE_ONLY:
+        coin = _args(rest, "24h")[0]
+        if coin not in config.COINS:
+            return await send(chat, f"{coin} canlı izlenmiyor; canlı izlenenler: {', '.join(config.COINS)}.\n"
+                                    f"Isı haritası her Binance perp coini için çalışır: /isi {coin} 24s\n"
+                                    f"Canlı izlemeye eklemek için Railway'de COINS değişkenine {coin} ekle.")
     if cmd in ("/start", "/yardim", "/help"):
         return await send(chat, fmt.HELP)
     if cmd in ("/btc", "/eth", "/sol") or cmd == "/analiz":
         coin = cmd[1:].upper() if cmd != "/analiz" else _args(rest, "24h")[0]
-        if coin not in config.COINS: return await send(chat, f"{coin} izlenmiyor. İzlenenler: {', '.join(config.COINS)}")
         return await send(chat, fmt.analysis_text(await analysis.analysis(coin)))
     if cmd == "/isi":
         coin, w = _args(rest, "24h")
@@ -47,7 +54,7 @@ async def handle(chat, text):
         coin, w = _args(rest, "24h")
         r = await heatmap.realized(coin, w)
         byv = " · ".join(f"{v}: L {fmt.usd(x.get('long',0))} S {fmt.usd(x.get('short',0))}" for v, x in r["by_venue"].items())
-        cap = f"<b>{coin} gerçekleşen likidasyonlar · {w}</b>\nLong {fmt.usd(r['total_long'])} · Short {fmt.usd(r['total_short'])}\n{byv}"
+        cap = f"<b>{coin} gerçekleşen likidasyonlar · {w}{fmt.coverage_note({'1h': 3600, '4h': 14400, '24h': 86400, '7d': 604800, '30d': 2592000}[w])}</b>\nLong {fmt.usd(r['total_long'])} · Short {fmt.usd(r['total_short'])}\n{byv}"
         return await photo(chat, charts.realized_png(r, f"{coin} gerçekleşen likidasyonlar · {w}"), cap)
     if cmd == "/balina":
         coin, w = _args(rest, "4h")
@@ -57,7 +64,7 @@ async def handle(chat, text):
             agg = await c.fetch("SELECT side, sum(usd) u, count(*) n FROM whale_trades WHERE coin=$1 AND ts > now() - $2::interval GROUP BY side", coin, timedelta(seconds=secs))
         a = {r["side"]: r for r in agg}
         b, s_ = a.get("buy"), a.get("sell")
-        L = [f"<b>{coin} balina işlemleri · {w}</b> (eşik {fmt.usd(config.whale_threshold(coin))})",
+        L = [f"<b>{coin} balina işlemleri · {w}{fmt.coverage_note(secs)}</b> (eşik {fmt.usd(config.whale_threshold(coin))})",
              f"Alım {fmt.usd(b['u'] if b else 0)} ({b['n'] if b else 0}) · Satım {fmt.usd(s_['u'] if s_ else 0)} ({s_['n'] if s_ else 0}) · Net {fmt.usd((b['u'] if b else 0) - (s_['u'] if s_ else 0))}", ""]
         L += [f"{'🟢' if r['side']=='buy' else '🔴'} {r['ts'].strftime('%H:%M')} {r['venue']} {r['market']} {fmt.usd(r['usd'])} @ ${r['price']:,.0f}" for r in rows]
         return await send(chat, "\n".join(L))

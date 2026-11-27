@@ -25,7 +25,8 @@ ALERTS_ENABLED = os.environ.get("ALERTS_ENABLED", "1") == "1"
 REPORT_HOURS_UTC = [int(h) for h in os.environ.get("REPORT_HOURS_UTC", "").split(",") if h.strip().isdigit()]
 
 # OKX kontrat büyüklükleri (coin cinsinden)
-OKX_CTVAL = {"BTC": 0.01, "ETH": 0.1, "SOL": 1.0}
+OKX_CTVAL = {"BTC": 0.01, "ETH": 0.1, "SOL": 1.0}  # açılışta OKX'ten güncellenir (ws.load_okx_ctval)
+STARTED_AT = __import__("time").time()
 ALTS = [a.strip().upper() for a in os.environ.get(
     "ALTS", "ETH,SOL,BNB,XRP,DOGE,ADA,AVAX,LINK,DOT,TON,SUI,APT,NEAR,ARB,OP,INJ,LTC,BCH,TRX,PEPE").split(",") if a.strip()]
 

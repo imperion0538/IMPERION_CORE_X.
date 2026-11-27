@@ -41,6 +41,9 @@ async def selftest():
 
 async def main():
     await db.init()
+    async with db.pool.acquire() as c:
+        first = await c.fetchval("SELECT extract(epoch FROM min(ts)) FROM trades_1m")
+    if first: config.STARTED_AT = float(first)  # kapsama notları veritabanındaki ilk veriye göre
     runner = web.AppRunner(api.app()); await runner.setup()
     await web.TCPSite(runner, "0.0.0.0", config.PORT).start()
     log.info("API %s portunda; coinler %s", config.PORT, config.COINS)

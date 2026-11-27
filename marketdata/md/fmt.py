@@ -8,6 +8,12 @@ def usd(v):
 
 def pct(v, d=2): return "—" if v is None else f"{v:+.{d}f}%"
 
+def coverage_note(window_s):
+    import time
+    from . import config
+    up = time.time() - config.STARTED_AT
+    return f" (veri {int(up // 60)} dk)" if up < window_s else ""
+
 def analysis_text(a):
     d = a["derivatives"]; v = d["venues"]
     L = ["<b>%s analizi</b> · %s UTC" % (a["coin"], a["generated_utc"][11:16]),
@@ -24,10 +30,10 @@ def analysis_text(a):
     for k in ("bybit", "okx"):
         if k in v and "ls_account" in v[k]: ls.append(f"{k.capitalize()} {v[k]['ls_account']:.2f}")
     if ls: L += ["", "<b>Long/short</b> " + " · ".join(ls)]
-    L += ["", "<b>Likidasyon / balina / CVD</b>"]
-    for w in ("1h", "4h", "24h"):
+    L += ["", "<b>Likidasyon / balina / CVD</b>" + (" — sistem yeni başladı, uzun pencereler dolana kadar aynı veriyi gösterir" if coverage_note(86400) else "")]
+    for w, ws_ in (("1h", 3600), ("4h", 14400), ("24h", 86400)):
         f = a["flows"][w]; lq = f["liquidations"]; wh = f["whales"]; cv = f["cvd"]
-        L.append(f"{w}: liq L {usd(lq['long'])} / S {usd(lq['short'])} · balina net {usd(wh['net_usd'])} · CVD spot {usd(cv.get('spot', {}).get('delta'))} perp {usd(cv.get('perp', {}).get('delta'))}")
+        L.append(f"{w}{coverage_note(ws_)}: liq L {usd(lq['long'])} / S {usd(lq['short'])} · balina net {usd(wh['net_usd'])} · CVD spot {usd(cv.get('spot', {}).get('delta'))} perp {usd(cv.get('perp', {}).get('delta'))}")
     return "\n".join(L)
 
 HELP = """<b>IMPERION Market Data</b>

@@ -141,7 +141,17 @@ async def bybit():
     await run_stream("bybit", "wss://stream.bybit.com/v5/public/linear", on_open, on_msg, ping, 20)
 
 # ---- OKX
+async def load_okx_ctval():
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get("https://www.okx.com/api/v5/public/instruments", params={"instType": "SWAP"}) as r:
+                for i in (await r.json())["data"]:
+                    if i["instId"].endswith("-USDT-SWAP"): config.OKX_CTVAL[i["instId"].split("-")[0]] = float(i["ctVal"])
+    except Exception as e:
+        log.warning("OKX ctVal yüklenemedi: %s", e)
+
 async def okx():
+    await load_okx_ctval()
     inst = {f"{c}-USDT-SWAP": c for c in config.COINS if c in config.OKX_CTVAL}
     args = [{"channel": "trades", "instId": i} for i in inst] + [{"channel": "liquidation-orders", "instType": "SWAP"}]
     async def on_open(ws): await ws.send_json({"op": "subscribe", "args": args})
