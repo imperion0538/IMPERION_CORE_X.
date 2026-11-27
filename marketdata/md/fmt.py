@@ -70,8 +70,8 @@ def analysis_text(a):
 def whale_flow_text(report):
     c = report["coverage"]
     lines = [f"<b>{escape(report['coin'])} büyük işlem akışı</b> · {report['window']} · {report['generated_utc'][11:16]} UTC"]
-    if report["min_price"] is not None:
-        lines.append(f"Fiyat bölgesi: ${report['min_price']:,.2f} – ${report['max_price']:,.2f}")
+    if report["min_price"] is not None or report["max_price"] is not None:
+        lines.append(f"Fiyat bölgesi: {usd(report['min_price'])} – {usd(report['max_price'])}")
     for row in c["sources"]:
         lines.append(f"{escape(row['venue'])} {escape(row['market'])}: {row['observed_minutes']}/{c['expected_minutes']} kapalı dakika")
     if not c["sources"]:

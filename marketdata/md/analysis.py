@@ -59,7 +59,11 @@ def coinbase_premium(coin):
 async def options(coin):
     async with db.pool.acquire() as c:
         r = await c.fetchrow("SELECT ts, data FROM options_snap WHERE coin=$1 ORDER BY ts DESC LIMIT 1", coin)
-    return json.loads(r["data"]) if r else None
+    if r is None:
+        return None
+    age = max(0, int((datetime.now(UTC) - r["ts"]).total_seconds()))
+    return {**json.loads(r["data"]), "snapshot_utc": r["ts"].isoformat(),
+            "age_seconds": age, "stale": age > 1800}
 
 async def alts(base="BTC", hours=168):
     async def build():

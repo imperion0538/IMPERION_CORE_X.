@@ -278,6 +278,10 @@ def render(c1, c4, analysis=None, heat=None, depth=None, now=None, coin="BTC"):
             ("Open Interest:", "—" if oic is None else ("Artış" if oic > 0.5 else "Düşüş" if oic < -0.5 else "Yatay / sınırlı") + f" ({oic:+.2f}%)", INK),
             ("Long/Short Hesap Oranı:", "—" if ls is None else f"{ls:.2f}" + (" · long kalabalığı riski" if ls > 1.8 else ""), RED if (ls or 0) > 1.8 else INK),
             ("Genel Karar:", "Teyit gelmeden agresif işlem yok." if not active else f"Senaryo {active[0]['no']} bölgesinde, teyit bekleniyor.", INK)]
+    flow = (analysis or {}).get("flows", {}).get("4h", {})
+    cov = flow.get("coverage", {})
+    observed = max((v["observed_minutes"] for v in cov.get("sources", [])), default=0)
+    rows[-1] = ("4H işlem verisi:", f"En geniş kaynak {observed}/{cov.get('expected_minutes', 240)} dk", INK)
     _rows_panel(fig, (0.006, 0.01, 0.26, 0.315), "Piyasa Özeti", rows, size=16)
 
     lv = [("Majör Direnç Bölgesi:", f"{tr_num(h1['major_res'][0])} – {tr_num(h1['major_res'][1])}"),
@@ -344,4 +348,7 @@ async def build(coin="BTC"):
         try: return await coro
         except Exception: return None
     a, h, d = await asyncio.gather(safe(analysis.analysis(coin)), safe(heatmap.model(coin, "24h")), safe(orderbook.latest(coin)))
-    return render(binance_candles(k1), binance_candles(k4), a, h, d, coin=coin)
+    from time import time
+    now_ms = int(time() * 1000)
+    c1, c4 = (binance_candles([row for row in rows if row[6] < now_ms]) for rows in (k1, k4))
+    return render(c1, c4, a, h, d, coin=coin)

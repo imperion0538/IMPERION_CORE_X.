@@ -7,7 +7,7 @@ log = logging.getLogger("db")
 # Bu sürecin veritabanındaki kimliği. Yalnızca writer_lock tablosundaki kimlik yazabilir;
 # böylece kapanmamış eski dağıtımlar (ör. Railway'de "REMOVED" görünüp çalışmaya devam eden süreç) veri yazamaz.
 APP_NAME = f"md:{os.environ.get('RAILWAY_DEPLOYMENT_ID', socket.gethostname())[:40]}:{int(time.time())}:{os.urandom(4).hex()}"
-WRITE_TABLES = ("liquidations", "trades_1m", "whale_trades", "deriv_snap", "options_snap", "telegram_deliveries", "depth_snap")
+WRITE_TABLES = ("trade_write_batches", "liquidations", "trades_1m", "whale_trades", "deriv_snap", "options_snap", "telegram_deliveries", "depth_snap")
 
 GUARD = """
 CREATE TABLE IF NOT EXISTS writer_lock (id INT PRIMARY KEY DEFAULT 1, app TEXT NOT NULL, since TIMESTAMPTZ NOT NULL DEFAULT now(), CHECK (id = 1));
@@ -25,6 +25,8 @@ END $$ LANGUAGE plpgsql;
 """
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS trade_write_batches (
+  id UUID PRIMARY KEY, ts TIMESTAMPTZ NOT NULL DEFAULT now());
 CREATE TABLE IF NOT EXISTS telegram_deliveries (
   kind TEXT NOT NULL, chat TEXT NOT NULL, PRIMARY KEY (kind, chat));
 CREATE TABLE IF NOT EXISTS liquidations (
@@ -52,7 +54,7 @@ CREATE TABLE IF NOT EXISTS depth_snap (
 CREATE TABLE IF NOT EXISTS options_snap (
   ts TIMESTAMPTZ NOT NULL, coin TEXT NOT NULL, data JSONB NOT NULL, PRIMARY KEY (coin, ts));
 """
-RETENTION = [("depth_snap", 10), ("trades_1m", 35), ("whale_trades", 120), ("liquidations", 120), ("deriv_snap", 120), ("options_snap", 60)]
+RETENTION = [("trade_write_batches", 2), ("depth_snap", 10), ("trades_1m", 35), ("whale_trades", 120), ("liquidations", 120), ("deriv_snap", 120), ("options_snap", 60)]
 pool: asyncpg.Pool | None = None
 
 DEDUPE_2026_11_27 = """

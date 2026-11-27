@@ -1,6 +1,7 @@
 """Periyodik REST toplayıcılar: OI, funding, long/short, opsiyonlar; dakikalık kovaları veritabanına yazar."""
 import asyncio, collections, json, logging, time
 from datetime import datetime, timezone
+from uuid import uuid4
 from . import config, db, http, option_metrics, state
 
 log = logging.getLogger("rest")
@@ -161,18 +162,33 @@ async def poll_options():
         await asyncio.sleep(900)
 
 async def flush_buckets():
+    pending = None
     while True:
         await asyncio.sleep(10)
-        closed = state.pop_closed_buckets()
-        if not closed: continue
-        rows = [(datetime.fromtimestamp(k[3], UTC), k[1], k[2], k[0], b[0], b[1], b[2], b[3], b[4], b[5], b[6]) for k, b in closed]
+        if pending is None:
+            closed = state.pop_closed_buckets()
+            if not closed:
+                continue
+            rows = [(datetime.fromtimestamp(k[3], UTC), *k[1:3], k[0], *bucket) for k, bucket in closed]
+            pending = uuid4(), rows
+        batch_id, rows = pending
         try:
-            async with db.pool.acquire() as cn:
-                await cn.executemany("INSERT INTO trades_1m (ts, venue, market, coin, buy_usd, sell_usd, n, open, high, low, close) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) "
-                                     "ON CONFLICT (coin, venue, market, ts) DO UPDATE SET buy_usd=trades_1m.buy_usd+EXCLUDED.buy_usd, sell_usd=trades_1m.sell_usd+EXCLUDED.sell_usd, "
-                                     "n=trades_1m.n+EXCLUDED.n, high=GREATEST(trades_1m.high,EXCLUDED.high), low=LEAST(trades_1m.low,EXCLUDED.low), close=EXCLUDED.close", rows)
+            async with db.pool.acquire() as conn, conn.transaction():
+                claimed = await conn.fetchval(
+                    "INSERT INTO trade_write_batches (id) VALUES ($1) ON CONFLICT DO NOTHING RETURNING true", batch_id)
+                if claimed:
+                    await conn.executemany("""
+                        INSERT INTO trades_1m (ts, venue, market, coin, buy_usd, sell_usd, n, open, high, low, close)
+                        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+                        ON CONFLICT (coin, venue, market, ts) DO UPDATE
+                        SET buy_usd=trades_1m.buy_usd+EXCLUDED.buy_usd, sell_usd=trades_1m.sell_usd+EXCLUDED.sell_usd,
+                            n=trades_1m.n+EXCLUDED.n, high=GREATEST(trades_1m.high,EXCLUDED.high),
+                            low=LEAST(trades_1m.low,EXCLUDED.low), close=EXCLUDED.close
+                    """, rows)
+            pending = None
         except Exception as e:
-            log.warning("kova yazma hatası: %s", e)
+            log.warning("İşlem toplamları yeniden denenecek: %s", type(e).__name__)
+
 
 async def daily_cleanup():
     while True:

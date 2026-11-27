@@ -89,3 +89,12 @@ call pozitif / put negatif varsayımını kullanır. Piyasa yapıcı yönü bili
 Opsiyon alarmları yeni snapshot'ları karşılaştırır. Eşikler:
 `OPTIONS_DVOL_CHANGE` (3 puan), `OPTIONS_MAX_PAIN_CHANGE_PCT` (%2),
 `OPTIONS_GEX_FLIP_MIN_USD` (1 milyon USD, işaret değişiminin her iki tarafında).
+
+### Piyasa araştırma raporu
+
+`/api/report?coin=BTC&window=15m&min_price=61000&max_price=62500`,
+seçilen fiyat bölgesindeki büyük işlemleri spot/perp ayrımı ve işlem sonrası
+fiyat tepkileriyle sunar. Rapor, veri kapsamı ile kaynak durumunu da içerir.
+Telegram'da `/arastirma BTC` komutunu kullanabilirsin.
+4K kartın teknik yapısı kapanmış mumlardan hesaplanır. Opsiyon API'si
+son kayıt saatini ve 30 dakikayı aşan kayıtlar için eskime durumunu gösterir.
