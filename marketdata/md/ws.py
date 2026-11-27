@@ -63,18 +63,56 @@ async def run_stream(name, url, on_open, on_msg, ping=None, ping_every=20):
 def sym_usdt(c): return c.lower() + "usdt"
 
 # ---- Binance
-async def binance_futures():
-    streams = "/".join([f"{sym_usdt(c)}@aggTrade" for c in config.COINS] + ["!forceOrder@arr"])
+async def run_rotating(name, urls, on_msg, silent_after=45):
+    """Birden fazla aday adresi dener: bağlanıp silent_after saniye mesaj alamazsa sıradakine geçer."""
+    h = state.stream_health.setdefault(name, {"last_msg": 0, "connected": False, "reconnects": 0, "msgs": 0, "url": None})
+    i, backoff = 0, 1
+    while True:
+        url = urls[i % len(urls)]
+        got = False
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.ws_connect(url, heartbeat=30, max_msg_size=0) as ws:
+                    log.info("%s bağlandı: %s", name, url); h["connected"] = True; h["url"] = url
+                    t0 = time.time()
+                    while True:
+                        try:
+                            msg = await ws.receive(timeout=silent_after if not got else 120)
+                        except asyncio.TimeoutError:
+                            log.warning("%s %s adresinden %s sn veri gelmedi", name, url, silent_after if not got else 120); break
+                        if msg.type == aiohttp.WSMsgType.TEXT:
+                            got = True; backoff = 1; state.touch(name)
+                            try: await on_msg(ws, json.loads(msg.data))
+                            except Exception as e: log.warning("%s mesaj hatası: %s", name, e)
+                        elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR, aiohttp.WSMsgType.CLOSE):
+                            break
+        except Exception as e:
+            log.warning("%s bağlantı hatası (%s): %s", name, url, e)
+        h["connected"] = False; h["reconnects"] += 1
+        if not got: i += 1
+        await asyncio.sleep(backoff); backoff = min(backoff * 2, 60)
+
+BN_FUT_BASES = ["wss://fstream.binance.com/market", "wss://fstream.binance.com", "wss://fstream.binance.com/public"]
+
+async def binance_futures_trades():
+    streams = "/".join(f"{sym_usdt(c)}@aggTrade" for c in config.COINS)
     m = {c + "USDT": c for c in config.COINS}
     async def on_msg(ws, d):
         d = d.get("data", d)
         if d.get("e") == "aggTrade" and d["s"] in m:
             await trade(m[d["s"]], "binance", "perp", d["T"], float(d["p"]), float(d["q"]), not d["m"])
-        elif d.get("e") == "forceOrder":
+    await run_rotating("binance_perp", [f"{b}/stream?streams={streams}" for b in BN_FUT_BASES], on_msg)
+
+async def binance_futures_liq():
+    m = {c + "USDT": c for c in config.COINS}
+    async def on_msg(ws, d):
+        d = d.get("data", d)
+        if d.get("e") == "forceOrder":
             o = d["o"]
             if o["s"] in m:
                 await save_liq("binance", m[o["s"]], "long" if o["S"] == "SELL" else "short", float(o["ap"] or o["p"]), float(o["z"] or o["q"]), o["T"])
-    await run_stream("binance_perp", f"wss://fstream.binance.com/stream?streams={streams}", None, on_msg)
+    # Likidasyon akışı seyrek olabilir: sessizlik eşiği daha uzun
+    await run_rotating("binance_liq", [f"{b}/ws/!forceOrder@arr" for b in BN_FUT_BASES], on_msg, silent_after=600)
 
 async def binance_spot():
     streams = "/".join(f"{sym_usdt(c)}@aggTrade" for c in config.COINS)
@@ -147,4 +185,4 @@ async def hyperliquid():
                     await trade(t["coin"], "hyperliquid", "perp", int(t["time"]), float(t["px"]), float(t["sz"]), t["side"] == "B")
     await run_stream("hyperliquid", "wss://api.hyperliquid.xyz/ws", on_open, on_msg, ping, 45)
 
-ALL = [binance_futures, binance_spot, bybit, okx, coinbase, hyperliquid]
+ALL = [binance_futures_trades, binance_futures_liq, binance_spot, bybit, okx, coinbase, hyperliquid]
