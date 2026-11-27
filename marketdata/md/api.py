@@ -3,7 +3,7 @@ import hmac, json, math, time
 from datetime import timedelta
 from aiohttp import web
 from pathlib import Path
-from . import analysis, card4k, charts, config, db, heatmap, orderbook, state, whales as whale_flow, reports
+from . import advanced, analysis, card4k, charts, config, db, heatmap, orderbook, state, whales as whale_flow, reports
 
 def _key_ok(req):
     if not config.API_KEY: return False
@@ -42,6 +42,18 @@ async def health(req):
     return j({"status": "ok", "data_status": data_status, "stale_streams": stale, "streams": {n: {"age_s": int(now - h["last_msg"]), "reconnects": h["reconnects"], "msgs": h["msgs"]} for n, h in state.stream_health.items()}})
 
 async def an(req): return j(await analysis.analysis(_coin(req)))
+
+async def advanced_report(req):
+    coin = _coin(req)
+    if coin not in config.COINS:
+        return web.json_response({"error": "Invalid monitored coin"}, status=400)
+    return j(await advanced.research(coin))
+
+async def options_flow(req):
+    coin = _coin(req)
+    if coin not in config.COINS:
+        return web.json_response({"error": "Invalid monitored coin"}, status=400)
+    return j(await advanced.option_flow(coin))
 async def live_report(req):
     coin, window = _coin(req), _win(req, "15m")
     if coin not in config.COINS or window not in whale_flow.WINDOWS:
@@ -146,7 +158,7 @@ async def db_conns(req):
 
 def app():
     a = web.Application(middlewares=[auth])
-    a.add_routes([web.get("/", health), web.get("/health", health), web.get("/api/analysis", an), web.get("/api/report", live_report), web.get("/api/heatmap", heat),
+    a.add_routes([web.get("/", health), web.get("/health", health), web.get("/api/analysis", an), web.get("/api/advanced", advanced_report), web.get("/api/options/flow", options_flow), web.get("/api/report", live_report), web.get("/api/heatmap", heat),
                   web.get("/api/heatmap.png", heat_png), web.get("/api/liquidations", liq), web.get("/api/whales", whales), web.get("/api/whale-flow", whale_report),
                   web.get("/api/derivatives", deriv), web.get("/api/options", opts), web.get("/api/alts", alts), web.get("/api/cvd", cvd),
                   web.get("/panel", panel), web.get("/api/coins", coins), web.get("/api/depth", depth), web.get("/api/orderbook.png", depth_png),

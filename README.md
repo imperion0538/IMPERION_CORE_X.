@@ -98,3 +98,12 @@ fiyat tepkileriyle sunar. Rapor, veri kapsamı ile kaynak durumunu da içerir.
 Telegram'da `/arastirma BTC` komutunu kullanabilirsin.
 4K kartın teknik yapısı kapanmış mumlardan hesaplanır. Opsiyon API'si
 son kayıt saatini ve 30 dakikayı aşan kayıtlar için eskime durumunu gösterir.
+
+### Advanced research (production integration)
+
+The original Advanced V2 prototype is superseded by the existing Railway single-writer architecture. No synthetic price/OI/funding/flow is injected into production. Redis/NATS/TimescaleDB and the standalone prototype dashboard are not required or deployed; PostgreSQL and the existing web panel remain authoritative.
+
+- `/api/advanced?coin=BTC`: observed per-source closed five-minute flow anomaly z-scores, explicitly heuristic cascade stress estimate (coverage-gated), and Deribit options premium flow.
+- `/api/options/flow?coin=BTC`: BTC/ETH inverse options premium flow over the last 15 minutes. Capped responses and invalid records are marked partial; unavailable is not zero. Put/call premium ratio differs from OI ratio.
+- `TELEGRAM_CARD_ONLY=1` (default): original 4K design, full-resolution PNG document only. /kart, /btc, /eth, /sol, /analiz and /kart arsiv; other analysis remains available via HTTP API. Scheduled reports and rate-limited alerts send 4K documents. Set 0 only to restore legacy text and summary commands.
+- No live order execution or automatic position opening is added. On-chain data and independent durable event streaming remain future integrations, not advertised as live.

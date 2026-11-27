@@ -11,6 +11,8 @@ WMAP = {"1s": "1h", "4s": "4h", "24s": "24h", "7g": "7d", "30g": "30d", "1h": "1
 
 async def send(chat, text):
     """Mesajı satır sınırlarından böler (HTML etiketi ortadan kesilmez); biçim reddedilirse düz metin dener."""
+    if config.TELEGRAM_CARD_ONLY:
+        return False
     s = await http.session()
     for part in fmt.split_message(text):
         async with s.post(f"{API}/sendMessage", json={"chat_id": chat, "text": part, "parse_mode": "HTML", "disable_web_page_preview": True}) as r:
@@ -32,8 +34,9 @@ async def photo(chat, png, caption, document=False):
     form.add_field("document" if document else "photo", png, filename="imperion.png", content_type="image/png")
     async with s.post(f"{API}/{'sendDocument' if document else 'sendPhoto'}", data=form) as r:
         if r.status != 200: log.warning("sendPhoto %s: %s", r.status, (await r.text())[:300])
-    if rest:
+    if rest and not config.TELEGRAM_CARD_ONLY:
         await send(chat, rest)
+    return r.status == 200
 
 CARD = Path(__file__).resolve().parents[1] / "assets" / "imperion-btc-tr-4k.png"
 
@@ -90,8 +93,27 @@ async def live_card(coin):
     a, h, d = await asyncio.gather(analysis.analysis(coin), heatmap.model(coin, "24h"), orderbook.latest(coin))
     return charts.analysis_card_png(a, h, d)
 
+async def send_live_4k(chat, coin, reason=""):
+    if coin not in config.COINS:
+        return False
+    png = await card4k.build(coin)
+    caption = f"{coin}USDT · 3840×2160 PNG · {reason}" if reason else f"{coin}USDT · 3840×2160 PNG"
+    return await photo(chat, png, caption, document=True)
+
+async def broadcast_card(coin, reason=""):
+    for chat in sorted(config.TELEGRAM_CHAT_IDS):
+        await send_live_4k(chat, coin, reason)
+
 async def handle(chat, text):
     parts = text.strip().split(); cmd = parts[0].split("@")[0].lower(); rest = parts[1:]
+    if config.TELEGRAM_CARD_ONLY:
+        if cmd == "/kart" and rest and rest[0].lower() in ("arsiv", "arşiv"):
+            return await send_card(chat)
+        if cmd in ("/btc", "/eth", "/sol", "/kart", "/analiz"):
+            coin = cmd[1:].upper() if cmd in ("/btc", "/eth", "/sol") else _args(rest, "24h")[0]
+            return await send_live_4k(chat, coin)
+        # Other analytical endpoints remain available through the HTTP API.
+        return
     if cmd in LIVE_ONLY:
         coin = _args(rest, "24h")[0]
         if coin not in config.COINS:
@@ -262,6 +284,7 @@ async def broadcast(text):
 async def alerts_loop():
     if not (config.TELEGRAM_BOT_TOKEN and config.TELEGRAM_CHAT_IDS and config.ALERTS_ENABLED): return
     last_cascade = {}
+    last_card = {}
     while True:
         await asyncio.sleep(60)
         items = []
@@ -274,6 +297,12 @@ async def alerts_loop():
                 lg = sum(u for t, cc, u, sd in state.recent_liq if cc == c and now - t < 300 and sd == "long")
                 items.append({"type": "cascade", "coin": c, "usd": tot, "long": lg, "short": tot - lg})
         if not items: continue
+        if config.TELEGRAM_CARD_ONLY:
+            for coin in sorted({a["coin"] for a in items}):
+                if now - last_card.get(coin, 0) >= 900:
+                    await broadcast_card(coin, "Piyasa akışı alarmı")
+                    last_card[coin] = now
+            continue
         L = ["<b>🗼 Alarm</b>"]
         for a in items[:20]:
             if a["type"] == "liq":
@@ -293,7 +322,9 @@ async def reports_loop():
         key = (now.date(), now.hour)
         if now.hour in config.REPORT_HOURS_UTC and now.minute < 5 and sent != key:
             sent = key
-            try: await broadcast(fmt.analysis_text(await analysis.analysis("BTC")))
+            try:
+                if config.TELEGRAM_CARD_ONLY: await broadcast_card("BTC", "Zamanlı rapor")
+                else: await broadcast(fmt.analysis_text(await analysis.analysis("BTC")))
             except Exception as e: log.warning("rapor hatası: %s", e)
 
 async def options_alerts():
@@ -342,7 +373,7 @@ async def options_alerts():
                 continue
             for chat in tuple(chats):
                 try:
-                    if await send(chat, message):
+                    if await (send_live_4k(chat, key[0], "Deribit opsiyon alarmı") if config.TELEGRAM_CARD_ONLY else send(chat, message)):
                         chats.remove(chat)
                 except (aiohttp.ClientError, asyncio.TimeoutError):
                     log.warning("Opsiyon alarmı yeniden denenecek")
