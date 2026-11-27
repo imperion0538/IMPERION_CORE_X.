@@ -35,3 +35,13 @@ async def test_tickers_missing_and_stale(monkeypatch):
     data = json.loads(response.text)
     assert data["BTC"]["price"] == 42
     assert data["ETH"]["price"] is None and data["SOL"]["price"] is None
+
+
+def test_public_rate_limit_budget(monkeypatch):
+    monkeypatch.setattr(api, "_hits", {})
+    monkeypatch.setattr(api.time, "time", lambda: 1000)
+    request = SimpleNamespace(headers={}, remote="192.0.2.1")
+    assert all(api._rate_ok(request) for _ in range(120))
+    assert not api._rate_ok(request)
+    monkeypatch.setattr(api.time, "time", lambda: 1061)
+    assert api._rate_ok(request)

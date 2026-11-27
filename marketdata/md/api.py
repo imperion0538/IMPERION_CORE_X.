@@ -13,7 +13,7 @@ def _key_ok(req):
 
 _hits: dict = {}
 
-def _rate_ok(req, limit=60):
+def _rate_ok(req, limit=120):
     """IP başına dakikada en fazla `limit` istek (anahtarsız erişim için)."""
     ip = (req.headers.get("X-Forwarded-For", "").split(",")[0].strip()) or (req.remote or "?")
     now = time.time(); q = [t for t in _hits.get(ip, []) if now - t < 60]
@@ -27,7 +27,7 @@ async def auth(req, handler):
     if req.path in ("/", "/health", "/panel", "/panel/classic") or _key_ok(req):
         return await handler(req)
     if config.PUBLIC_READ and req.method == "GET":
-        if not _rate_ok(req): return web.json_response({"error": "rate limited"}, status=429)
+        if not _rate_ok(req): return web.json_response({"error": "rate limited"}, status=429, headers={"Retry-After": "60"})
         return await handler(req)
     return web.json_response({"error": "unauthorized"}, status=401)
 
