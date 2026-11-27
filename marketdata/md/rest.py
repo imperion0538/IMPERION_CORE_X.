@@ -2,7 +2,7 @@
 import asyncio, collections, json, logging, time
 from datetime import datetime, timezone
 from uuid import uuid4
-from . import config, db, http, option_metrics, state
+from . import config, db, http, option_metrics, state, macro
 
 log = logging.getLogger("rest")
 UTC = timezone.utc
@@ -195,4 +195,4 @@ async def daily_cleanup():
         await _safe("cleanup", db.cleanup())
         await asyncio.sleep(86400)
 
-ALL = [poll_snapshots, poll_options, flush_buckets, daily_cleanup]
+ALL = [poll_snapshots, poll_options, flush_buckets, daily_cleanup, macro.poll_macro]
