@@ -87,8 +87,8 @@ def _chart(fig, rect, cs, res, tf, tag, tag_fc, extra):
     bsl = res["liq"]["bsl"]
     if bsl:
         z = (bsl[0], bsl[1]) if bsl[1] - bsl[0] > price * 0.0008 else ta.zone(bsl[0], 0.08)
-        band(z, RED_L, f"Likidite (BSL)\n{tr_num(z[0])} – {tr_num(z[1])}", RED_L, RED, len(cs) * 0.68)
-    band(res["support"], GREEN_L, f"Yakın Destek / Talep\n{tr_num(res['support'][0])} – {tr_num(res['support'][1])}", GREEN_L, GREEN, len(cs) * 0.78)
+        band(z, RED_L, f"Likidite (BSL)\n{tr_num(z[0])} – {tr_num(z[1])}", RED_L, RED, len(cs) * 0.56)
+    band(res["support"], GREEN_L, f"Yakın Destek / Talep\n{tr_num(res['support'][0])} – {tr_num(res['support'][1])}", GREEN_L, GREEN, len(cs) * 0.62)
     o = res["ote"]
     if o:
         lbl = "Bullish OTE / olası long indirim" if o["side"] == "long" else "Bearish OTE / olası short premium"
@@ -102,19 +102,33 @@ def _chart(fig, rect, cs, res, tf, tag, tag_fc, extra):
     if inside(res["local_low"]):
         ax.axhline(res["local_low"], color=INK, linestyle=":", linewidth=1.6, zorder=2)
         _label(ax, len(cs) * 0.15, res["local_low"], f"Lokal Dip {tr_num(res['local_low'])}", "white", INK, 12)
-    for p, kind in extra:
-        if inside(p):
-            col = PURPLE if kind == "liq" else BLUE
+    gap = (hi - lo + 2 * pad) * 0.04  # etiketler arası en az dikey boşluk (veri birimi)
+    labels = []
+    for kind in ("liq", "wall"):
+        col = PURPLE if kind == "liq" else BLUE
+        ps = sorted(p for p, k in extra if k == kind and inside(p))
+        for p in ps:
             ax.axhline(p, color=col, linestyle="--", linewidth=1.4, alpha=0.8, zorder=2)
-            ax.text(len(cs) - 0.5, p, ("Likidasyon kümesi " if kind == "liq" else "Defter duvarı ") + tr_num(p), color=col, fontsize=11,
-                    va="bottom", ha="right", zorder=5, bbox=dict(boxstyle="square,pad=0.1", fc="white", ec="none", alpha=0.8))
+        groups = []  # birbirine çok yakın seviyeler tek etikette birleşir
+        for p in ps:
+            if groups and p - groups[-1][-1] < gap: groups[-1].append(p)
+            else: groups.append([p])
+        for g in groups:
+            name = ("Likidasyon kümesi" if len(g) == 1 else "Likidasyon kümeleri") if kind == "liq" else ("Defter duvarı" if len(g) == 1 else "Defter duvarları")
+            labels.append([sum(g) / len(g), f"{name} " + " / ".join(tr_num(x) for x in g), col])
+    labels.sort(key=lambda l: l[0])
+    for i in range(1, len(labels)):  # üst üste binenleri yukarı it
+        if labels[i][0] - labels[i - 1][0] < gap: labels[i][0] = labels[i - 1][0] + gap
+    for y, text, col in labels:
+        ax.text(len(cs) - 0.5, y, text, color=col, fontsize=12, fontweight="bold", va="center", ha="right", zorder=8,
+                bbox=dict(boxstyle="round,pad=0.25", fc="white", ec=col, lw=1, alpha=0.92))
     ax.axhline(price, color=ORANGE, linewidth=1.4, zorder=2)
     ax.text(right, price, f" {tr_num(price, 2)} ", color="white", fontsize=15, fontweight="bold", va="center", ha="left", zorder=7,
             bbox=dict(boxstyle="square,pad=0.25", fc=ORANGE, ec=ORANGE), clip_on=False)
     st = res["structure"]
     if st["choch"]:
         _label(ax, len(cs) * 0.12, lo + (hi - lo) * 0.85, f"{tf} {'bullish' if st['choch'] == 'bullish' else 'bearish'} CHoCH adayı\n(teyit bekleniyor)", "white", INK, 12)
-    ax.yaxis.tick_right(); ax.tick_params(axis="y", labelsize=14, colors=INK); ax.tick_params(axis="x", labelbottom=False)
+    ax.yaxis.tick_right(); ax.tick_params(axis="y", labelsize=14, colors=INK); ax.tick_params(axis="x", labelbottom=False, length=0)
     ax.yaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda v, _: tr_num(v, 2)))
     for s in ax.spines.values(): s.set_visible(False)
     ax.grid(axis="y", color="#eef0f3", linewidth=1)
@@ -129,7 +143,8 @@ def _chart(fig, rect, cs, res, tf, tag, tag_fc, extra):
     ticks = xs[step // 2::step]
     axd.set_xticks(ticks)
     axd.set_xticklabels([(datetime.fromtimestamp(cs[i][0] / 1000, timezone.utc) + timedelta(hours=3)).strftime("%d.%m %H:%M" if tf == "1H" else "%d.%m") for i in ticks])
-    axd.text(0.0, 1.02, f"Alış − satış deltası (taker, {SYMBOL[:-4]})", transform=axd.transAxes, fontsize=11, color=SUB)
+    axd.text(0.0, 1.04, f"Alış − satış deltası (taker, {SYMBOL[:-4]})", transform=axd.transAxes, fontsize=12, color=SUB,
+             bbox=dict(boxstyle="square,pad=0.15", fc="white", ec="none"))
 
 
 def _scenarios(fig, rect, scs):
@@ -273,7 +288,7 @@ def render(c1, c4, analysis=None, heat=None, depth=None, now=None, coin="BTC"):
         if b and a:
             notes.append(f"Emir defteri duvarları: alış {tr_num(b[0]['price'])}, satış {tr_num(a[0]['price'])} (birleşik defter).")
     notes.append("CHoCH ve likidite adayları yalnızca olasılıktır; teyit alınmadan geçerli kabul edilmez.")
-    _text_panel(fig, (0.51, 0.01, 0.26, 0.315), "Yapı ve Likidite Notları", notes, size=13, width=66)
+    _text_panel(fig, (0.51, 0.01, 0.26, 0.315), "Yapı ve Likidite Notları", notes, size=15, width=56)
 
     x0, y0, w, h = 0.775, 0.01, 0.219, 0.315
     _box(fig, x0, y0 + 0.11, w, h - 0.11, ec=GREEN, lw=2.5)
