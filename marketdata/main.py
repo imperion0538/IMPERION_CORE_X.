@@ -52,6 +52,9 @@ async def writer_watchdog():
             log.warning("yazıcı kontrolü yapılamadı: %s", e)
 
 async def main():
+    tasks = [*ws.ALL, *rest.ALL, orderbook.poll, *telegram.ALL]
+    if not all(callable(task) for task in tasks):
+        raise RuntimeError("Invalid service task registry")
     await db.init()
     async with db.pool.acquire() as c:
         first = await c.fetchval("SELECT extract(epoch FROM min(ts)) FROM trades_1m")
@@ -61,7 +64,7 @@ async def main():
     log.info("API %s portunda; coinler %s", config.PORT, config.COINS)
     asyncio.create_task(selftest())
     asyncio.create_task(writer_watchdog())
-    await asyncio.gather(*[supervise(f) for f in ws.ALL + rest.ALL + [orderbook.poll] + telegram.ALL])
+    await asyncio.gather(*[supervise(f) for f in tasks])
 
 if __name__ == "__main__":
     asyncio.run(main())
