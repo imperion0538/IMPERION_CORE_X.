@@ -67,21 +67,21 @@ async def run_rotating(name, urls, on_msg, silent_after=45):
     """Birden fazla aday adresi dener: bağlanıp silent_after saniye mesaj alamazsa sıradakine geçer."""
     h = state.stream_health.setdefault(name, {"last_msg": 0, "connected": False, "reconnects": 0, "msgs": 0, "url": None})
     i, backoff = 0, 1
+    proven = None  # veri geldiği görülen adres: bir kez çalıştıysa sessizlikte ondan ayrılma
     while True:
-        url = urls[i % len(urls)]
+        url = proven or urls[i % len(urls)]
         got = False
         try:
             async with aiohttp.ClientSession() as s:
                 async with s.ws_connect(url, heartbeat=30, max_msg_size=0) as ws:
                     log.info("%s bağlandı: %s", name, url); h["connected"] = True; h["url"] = url
-                    t0 = time.time()
                     while True:
                         try:
-                            msg = await ws.receive(timeout=silent_after if not got else 120)
+                            msg = await ws.receive(timeout=silent_after if not (got or proven) else max(120, silent_after))
                         except asyncio.TimeoutError:
-                            log.warning("%s %s adresinden %s sn veri gelmedi", name, url, silent_after if not got else 120); break
+                            log.info("%s %s adresinden veri gelmedi, yeniden bağlanılıyor", name, url); break
                         if msg.type == aiohttp.WSMsgType.TEXT:
-                            got = True; backoff = 1; state.touch(name)
+                            got = True; proven = url; backoff = 1; state.touch(name)
                             try: await on_msg(ws, json.loads(msg.data))
                             except Exception as e: log.warning("%s mesaj hatası: %s", name, e)
                         elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR, aiohttp.WSMsgType.CLOSE):
@@ -89,7 +89,7 @@ async def run_rotating(name, urls, on_msg, silent_after=45):
         except Exception as e:
             log.warning("%s bağlantı hatası (%s): %s", name, url, e)
         h["connected"] = False; h["reconnects"] += 1
-        if not got: i += 1
+        if not got and not proven: i += 1
         await asyncio.sleep(backoff); backoff = min(backoff * 2, 60)
 
 BN_FUT_BASES = ["wss://fstream.binance.com/market", "wss://fstream.binance.com", "wss://fstream.binance.com/public"]
@@ -112,7 +112,7 @@ async def binance_futures_liq():
             if o["s"] in m:
                 await save_liq("binance", m[o["s"]], "long" if o["S"] == "SELL" else "short", float(o["ap"] or o["p"]), float(o["z"] or o["q"]), o["T"])
     # Likidasyon akışı seyrek olabilir: sessizlik eşiği daha uzun
-    await run_rotating("binance_liq", [f"{b}/ws/!forceOrder@arr" for b in BN_FUT_BASES], on_msg, silent_after=600)
+    await run_rotating("binance_liq", [f"{b}/ws/!forceOrder@arr" for b in BN_FUT_BASES], on_msg, silent_after=1800)
 
 async def binance_spot():
     streams = "/".join(f"{sym_usdt(c)}@aggTrade" for c in config.COINS)

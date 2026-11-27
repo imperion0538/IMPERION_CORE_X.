@@ -7,7 +7,7 @@ log = logging.getLogger("db")
 # Bu sürecin veritabanındaki kimliği. Yalnızca writer_lock tablosundaki kimlik yazabilir;
 # böylece kapanmamış eski dağıtımlar (ör. Railway'de "REMOVED" görünüp çalışmaya devam eden süreç) veri yazamaz.
 APP_NAME = f"md:{os.environ.get('RAILWAY_DEPLOYMENT_ID', socket.gethostname())[:40]}:{int(time.time())}:{os.urandom(4).hex()}"
-WRITE_TABLES = ("liquidations", "trades_1m", "whale_trades", "deriv_snap", "options_snap", "telegram_deliveries")
+WRITE_TABLES = ("liquidations", "trades_1m", "whale_trades", "deriv_snap", "options_snap", "telegram_deliveries", "depth_snap")
 
 GUARD = """
 CREATE TABLE IF NOT EXISTS writer_lock (id INT PRIMARY KEY DEFAULT 1, app TEXT NOT NULL, since TIMESTAMPTZ NOT NULL DEFAULT now(), CHECK (id = 1));
@@ -44,10 +44,13 @@ CREATE TABLE IF NOT EXISTS deriv_snap (
   price DOUBLE PRECISION, oi_usd DOUBLE PRECISION, funding_8h DOUBLE PRECISION, extra JSONB,
   PRIMARY KEY (coin, venue, ts));
 CREATE INDEX IF NOT EXISTS deriv_snap_coin_ts ON deriv_snap (coin, ts DESC);
+CREATE TABLE IF NOT EXISTS depth_snap (
+  ts TIMESTAMPTZ NOT NULL, coin TEXT NOT NULL, mid DOUBLE PRECISION NOT NULL, step DOUBLE PRECISION NOT NULL, data JSONB NOT NULL,
+  PRIMARY KEY (coin, ts));
 CREATE TABLE IF NOT EXISTS options_snap (
   ts TIMESTAMPTZ NOT NULL, coin TEXT NOT NULL, data JSONB NOT NULL, PRIMARY KEY (coin, ts));
 """
-RETENTION = [("trades_1m", 35), ("whale_trades", 120), ("liquidations", 120), ("deriv_snap", 120), ("options_snap", 60)]
+RETENTION = [("depth_snap", 10), ("trades_1m", 35), ("whale_trades", 120), ("liquidations", 120), ("deriv_snap", 120), ("options_snap", 60)]
 pool: asyncpg.Pool | None = None
 
 DEDUPE_2026_11_27 = """

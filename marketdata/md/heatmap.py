@@ -64,36 +64,45 @@ async def model(coin="BTC", window="24h"):
         bn, ok = await asyncio.gather(_safe(_oi_binance(coin, interval, start)), _safe(_oi_okx(coin, interval, start)))
         by = await _safe(_oi_bybit(coin, interval, start, prices))
         series = {"binance": bn, "bybit": by, "okx": ok}
-        ts_list = sorted(prices)
-        pos, prev = [], {}
-        used = {v: 0 for v in series}
-        for t in ts_list:
-            h, l, c = prices[t]
-            pos = [p for p in pos if not ((p[1] == "L" and l <= p[0]) or (p[1] == "S" and h >= p[0]))]
-            delta = 0.0
-            for v, s in series.items():
-                if t in s:
-                    if v in prev: delta += s[t] - prev[v]; used[v] += 1
-                    prev[v] = s[t]
-            if delta > 0:
-                for lev, w in LEVERAGE:
-                    pos.append([c * (1 - 1 / lev), "L", delta * w / 2]); pos.append([c * (1 + 1 / lev), "S", delta * w / 2])
-            elif delta < 0:
-                tot = sum(p[2] for p in pos)
-                if tot > 0:
-                    f = max(0.0, 1 + delta / tot)
-                    for p in pos: p[2] *= f
-        ref = prices[ts_list[-1]][2]
-        n = 50; step = rng / n
-        bins = []
-        for i in range(-n, n):
-            lo, hi = ref * (1 + i * step), ref * (1 + (i + 1) * step)
-            bins.append({"lo": lo, "hi": hi, "mid": (lo + hi) / 2,
-                         "long_usd": sum(p[2] for p in pos if p[1] == "L" and lo <= p[0] < hi),
-                         "short_usd": sum(p[2] for p in pos if p[1] == "S" and lo <= p[0] < hi)})
+        ref, bins, used = simulate(prices, series, rng)
         return {"coin": coin, "window": window, "price": ref, "interval": interval, "venues_used": {v: k for v, k in used.items() if k},
                 "bins": bins, "clusters": clusters(bins, ref), "generated_utc": datetime.now(UTC).strftime("%Y-%m-%d %H:%M")}
     return await http.cached(f"heat:{coin}:{window}", 120, build)
+
+def simulate(prices, series, rng, n=50, leverage=LEVERAGE):
+    """Saf model. prices: {ts: (high, low, close)}, series: {borsa: {ts: oi_usd}}.
+    Döndürür: (referans fiyat, kovalar, borsa başına kullanılan nokta sayısı)."""
+    ts_list = sorted(prices)
+    if not ts_list:
+        raise ValueError("fiyat verisi yok")
+    pos, prev = [], {}
+    used = {v: 0 for v in series}
+    for t in ts_list:
+        h, l, c = prices[t]
+        pos = [p for p in pos if not ((p[1] == "L" and l <= p[0]) or (p[1] == "S" and h >= p[0]))]
+        delta = 0.0
+        for v, s in series.items():
+            if t in s:
+                if v in prev:
+                    delta += s[t] - prev[v]; used[v] += 1
+                prev[v] = s[t]
+        if delta > 0:
+            for lev, w in leverage:
+                pos.append([c * (1 - 1 / lev), "L", delta * w / 2]); pos.append([c * (1 + 1 / lev), "S", delta * w / 2])
+        elif delta < 0:
+            tot = sum(p[2] for p in pos)
+            if tot > 0:
+                f = max(0.0, 1 + delta / tot)
+                for p in pos: p[2] *= f
+    ref = prices[ts_list[-1]][2]
+    step = rng / n
+    bins = []
+    for i in range(-n, n):
+        lo, hi = ref * (1 + i * step), ref * (1 + (i + 1) * step)
+        bins.append({"lo": lo, "hi": hi, "mid": (lo + hi) / 2,
+                     "long_usd": sum(p[2] for p in pos if p[1] == "L" and lo <= p[0] < hi),
+                     "short_usd": sum(p[2] for p in pos if p[1] == "S" and lo <= p[0] < hi)})
+    return ref, bins, used
 
 def clusters(bins, ref, k=3):
     out = []

@@ -3,24 +3,33 @@ import asyncio, json, logging, time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 import aiohttp
-from . import analysis, charts, config, db, fmt, heatmap, http, state, whales
+from . import analysis, charts, config, db, fmt, heatmap, http, orderbook, state, whales
 
 log = logging.getLogger("telegram")
 API = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}"
 WMAP = {"1s": "1h", "4s": "4h", "24s": "24h", "7g": "7d", "30g": "30d", "1h": "1h", "4h": "4h", "24h": "24h", "7d": "7d", "30d": "30d"}
 
 async def send(chat, text):
+    """Mesajı satır sınırlarından böler (HTML etiketi ortadan kesilmez); biçim reddedilirse düz metin dener."""
     s = await http.session()
-    for i in range(0, len(text), 3900):
-        async with s.post(f"{API}/sendMessage", json={"chat_id": chat, "text": text[i:i + 3900], "parse_mode": "HTML", "disable_web_page_preview": True}) as r:
-            if r.status != 200: log.warning("sendMessage %s: %s", r.status, await r.text())
+    for part in fmt.split_message(text):
+        async with s.post(f"{API}/sendMessage", json={"chat_id": chat, "text": part, "parse_mode": "HTML", "disable_web_page_preview": True}) as r:
+            if r.status == 200: continue
+            body = await r.text()
+            log.warning("sendMessage %s: %s", r.status, body[:300])
+        if r.status == 400:
+            async with s.post(f"{API}/sendMessage", json={"chat_id": chat, "text": fmt.strip_html(part), "disable_web_page_preview": True}) as r2:
+                if r2.status != 200: log.warning("sendMessage düz metin %s", r2.status)
 
-async def photo(chat, png, caption):
+async def photo(chat, png, caption, document=False):
     s = await http.session()
-    form = aiohttp.FormData(); form.add_field("chat_id", str(chat)); form.add_field("caption", caption[:1000]); form.add_field("parse_mode", "HTML")
-    form.add_field("photo", png, filename="chart.png", content_type="image/png")
-    async with s.post(f"{API}/sendPhoto", data=form) as r:
-        if r.status != 200: log.warning("sendPhoto %s: %s", r.status, await r.text())
+    cap, rest = fmt.split_caption(caption)
+    form = aiohttp.FormData(); form.add_field("chat_id", str(chat)); form.add_field("caption", cap); form.add_field("parse_mode", "HTML")
+    form.add_field("document" if document else "photo", png, filename="imperion.png", content_type="image/png")
+    async with s.post(f"{API}/{'sendDocument' if document else 'sendPhoto'}", data=form) as r:
+        if r.status != 200: log.warning("sendPhoto %s: %s", r.status, (await r.text())[:300])
+    if rest:
+        await send(chat, rest)
 
 CARD = Path(__file__).resolve().parents[1] / "assets" / "imperion-btc-tr-4k.png"
 
@@ -59,15 +68,23 @@ async def deliver_card():
                     log.info("Telegram 4K kart teslimi başarılı")
 
 
+KEYWORDS = {"arsiv", "arşiv", "dosya"}
+
 def _args(parts, default_window):
     coin, window = "BTC", default_window
     for p in parts:
         p2 = p.lower()
+        if p2 in KEYWORDS: continue
         if p2 in WMAP: window = WMAP[p2]
         elif p.upper() in config.COINS or p.upper().isalpha(): coin = p.upper()
     return coin, window
 
-LIVE_ONLY = ("/likidasyon", "/balina", "/akis", "/oi", "/ls", "/analiz")
+LIVE_ONLY = ("/likidasyon", "/balina", "/akis", "/oi", "/ls", "/analiz", "/derinlik", "/defter", "/cvd", "/kart")
+HOURS = {"1h": 1, "4h": 4, "24h": 24, "7d": 168, "30d": 720}
+
+async def live_card(coin):
+    a, h, d = await asyncio.gather(analysis.analysis(coin), heatmap.model(coin, "24h"), orderbook.latest(coin))
+    return charts.analysis_card_png(a, h, d)
 
 async def handle(chat, text):
     parts = text.strip().split(); cmd = parts[0].split("@")[0].lower(); rest = parts[1:]
@@ -83,7 +100,28 @@ async def handle(chat, text):
         coin = cmd[1:].upper() if cmd != "/analiz" else _args(rest, "24h")[0]
         return await send(chat, fmt.analysis_text(await analysis.analysis(coin)))
     if cmd == "/kart":
-        return await send_card(chat)
+        if rest and rest[0].lower() in ("arsiv", "arşiv"):
+            return await send_card(chat)
+        coin = _args(rest, "24h")[0]
+        return await photo(chat, await live_card(coin), f"<b>{coin} canlı analiz kartı</b> · 1920×1080", document=bool(rest and rest[-1].lower() == "dosya"))
+    if cmd == "/derinlik":
+        coin = _args(rest, "24h")[0]
+        d = await orderbook.latest(coin)
+        if not d: return await send(chat, "Henüz emir defteri görüntüsü yok; dakikada bir toplanıyor.")
+        return await send(chat, fmt.depth_text(coin, d))
+    if cmd == "/defter":
+        coin, w = _args(rest, "4h")
+        hours = min(HOURS.get(w, 4), 24)
+        hist = await orderbook.history(coin, hours)
+        return await photo(chat, charts.orderbook_heatmap_png(hist, f"{coin} emir defteri ısı haritası · son {hours} saat"),
+                           f"<b>{coin} emir defteri ısı haritası</b> · son {hours} saat · {len(hist)} görüntü\nParlak bantlar büyük bekleyen emirlerdir (duvar).")
+    if cmd == "/cvd":
+        coin, w = _args(rest, "24h")
+        hours = HOURS.get(w, 24)
+        rows = await analysis.cvd_series(coin, hours)
+        tot = {m: sum(r["delta"] for r in rows if r["market"] == m) for m in ("spot", "perp")}
+        return await photo(chat, charts.cvd_png(rows, f"{coin} CVD · {w}{fmt.coverage_note(hours * 3600)}"),
+                           f"<b>{coin} CVD · {w}</b>\nSpot {fmt.usd(tot['spot'])} · Perp {fmt.usd(tot['perp'])}")
     if cmd == "/isi":
         coin, w = _args(rest, "24h")
         h = await heatmap.model(coin, w)

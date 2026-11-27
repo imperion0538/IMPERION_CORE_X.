@@ -1,7 +1,7 @@
 """BTC odaklı çoklu borsa analizi: fiyat, OI, funding, long/short, likidasyon, balina akışı, CVD, Coinbase primi, opsiyon, altcoin uyumu."""
 import asyncio, json, math, time
 from datetime import datetime, timedelta, timezone
-from . import config, db, heatmap, http, state, whales
+from . import config, db, heatmap, http, orderbook, state, whales
 
 UTC = timezone.utc
 BN = "https://fapi.binance.com"
@@ -120,6 +120,13 @@ def summarize(a):
         lo = min([c for c in h["clusters"] if c["side"] == "long"], key=lambda c: abs(c["dist_pct"]), default=None)
         hi = min([c for c in h["clusters"] if c["side"] == "short"], key=lambda c: abs(c["dist_pct"]), default=None)
         if lo and hi: s.append(f"En yakın büyük likidasyon kümeleri: aşağıda ${lo['price']:,.0f} ({lo['dist_pct']:+.1f}%), yukarıda ${hi['price']:,.0f} ({hi['dist_pct']:+.1f}%).")
+    ob = a.get("orderbook")
+    if ob:
+        b1 = ob["bands"]["1"]
+        s.append(f"Emir defteri ±%1: alış ${b1['bid_usd']/1e6:.1f}M, satış ${b1['ask_usd']/1e6:.1f}M (dengesizlik {b1['imbalance']:+.2f}).")
+        bw, aw = ob["walls"]["bid"][:1], ob["walls"]["ask"][:1]
+        if bw and aw:
+            s.append(f"En büyük defter duvarları: alış ${bw[0]['price']:,.0f} ({bw[0]['dist_pct']:+.1f}%, ${bw[0]['usd']/1e6:.1f}M), satış ${aw[0]['price']:,.0f} ({aw[0]['dist_pct']:+.1f}%, ${aw[0]['usd']/1e6:.1f}M).")
     o = a.get("options")
     if o and o.get("expiries"):
         e = o["expiries"][0]; s.append(f"En yakın büyük opsiyon vadesi {e['expiry']}: max pain ${e['max_pain']:,.0f}, put/call {e['put_call']:.2f}. DVOL {o.get('dvol') or 0:.1f}.")
@@ -159,10 +166,24 @@ async def analysis(coin="BTC"):
             price_changes(coin), deriv(coin), flows(coin), options(coin),
             heatmap.model(coin, "24h"), price_structure(coin),
         )
+        depth = await orderbook.latest(coin)
         a = {"coin": coin, "generated_utc": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"), "price": price, "price_change_pct": chg,
+             "orderbook": {k: depth[k] for k in ("bands", "walls", "sources", "ts") if k in depth} if depth else None,
              "price_structure": structure, "derivatives": der, "flows": fl, "coinbase_premium_pct": coinbase_premium(coin), "options": opt,
              "heatmap_24h": {"estimated": True, "clusters": hm["clusters"], "price": hm["price"],
                              "venues_used": hm["venues_used"], "generated_utc": hm["generated_utc"]}}
         a["summary"] = summarize(a)
         return a
     return await http.cached(f"analysis:{coin}", 30, build)
+
+
+async def cvd_series(coin, hours=24):
+    """Grafik için CVD serisi: 24 saate kadar 5 dakikalık, daha uzunsa saatlik kovalar."""
+    bucket = "5 minutes" if hours <= 24 else "1 hour"
+    async with db.pool.acquire() as c:
+        rows = await c.fetch(f"""
+            SELECT date_bin('{bucket}', ts, '2000-01-01') t, market, sum(buy_usd) - sum(sell_usd) delta,
+                   avg(close) FILTER (WHERE venue = 'binance' AND market = 'perp') px
+            FROM trades_1m WHERE coin=$1 AND ts > now() - $2::interval GROUP BY 1, 2 ORDER BY 1""", coin, timedelta(hours=hours))
+    px = {r["t"]: r["px"] for r in rows if r["px"]}
+    return [{"t": r["t"], "market": r["market"], "delta": r["delta"], "price": px.get(r["t"])} for r in rows]

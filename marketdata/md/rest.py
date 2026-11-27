@@ -14,6 +14,27 @@ async def _safe(name, coro):
         log.warning("%s hatası: %s", name, e)
         return None
 
+def to_8h(rate, interval_hours):
+    """Farklı ödeme aralıklarını (1s, 4s, 8s) karşılaştırılabilir 8 saatlik orana çevirir."""
+    return float(rate) * 8 / (interval_hours or 8)
+
+async def _binance_intervals():
+    async def load():
+        return {x["symbol"]: float(x["fundingIntervalHours"]) for x in await http.get(f"{BN}/fapi/v1/fundingInfo")}
+    return await http.cached("bn_funding_info", 3600, load)
+
+async def _bybit_interval(sym):
+    async def load():
+        r = await http.get("https://api.bybit.com/v5/market/instruments-info", {"category": "linear", "symbol": sym})
+        return float(r["result"]["list"][0]["fundingInterval"]) / 60
+    return await http.cached(f"bybit_fi:{sym}", 3600, load)
+
+async def _bitget_interval(sym):
+    async def load():
+        r = await http.get("https://api.bitget.com/api/v2/mix/market/current-fund-rate", {"symbol": sym, "productType": "usdt-futures"})
+        return float(r["data"][0].get("fundingRateInterval") or 8)
+    return await http.cached(f"bitget_fi:{sym}", 3600, load)
+
 async def snap_binance(c):
     s = c + "USDT"
     oi, pi = await asyncio.gather(http.get(f"{BN}/fapi/v1/openInterest", {"symbol": s}), http.get(f"{BN}/fapi/v1/premiumIndex", {"symbol": s}))
@@ -23,7 +44,9 @@ async def snap_binance(c):
                       ("ls_top_position", "topLongShortPositionRatio"), ("taker_buy_sell", "takerlongshortRatio")]:
         r = await _safe(path, http.get(f"{BN}/futures/data/{path}", {"symbol": s, "period": "5m", "limit": 1}))
         if r: extra[key] = float(r[0].get("longShortRatio") or r[0].get("buySellRatio"))
-    return px, float(oi["openInterest"]) * px, float(pi["lastFundingRate"]), extra
+    iv = (await _safe("binance fundingInfo", _binance_intervals()) or {}).get(s, 8)
+    extra["funding_interval_h"] = iv
+    return px, float(oi["openInterest"]) * px, to_8h(pi["lastFundingRate"], iv), extra
 
 async def snap_bybit(c):
     t = (await http.get("https://api.bybit.com/v5/market/tickers", {"category": "linear", "symbol": c + "USDT"}))["result"]["list"][0]
@@ -31,7 +54,9 @@ async def snap_bybit(c):
     r = await _safe("bybit ls", http.get("https://api.bybit.com/v5/market/account-ratio", {"category": "linear", "symbol": c + "USDT", "period": "5min", "limit": 1}))
     if r and r["result"]["list"]:
         x = r["result"]["list"][0]; extra["ls_account"] = float(x["buyRatio"]) / max(1e-9, float(x["sellRatio"]))
-    return float(t["markPrice"]), float(t["openInterestValue"]), float(t["fundingRate"]), extra
+    iv = await _safe("bybit fundingInterval", _bybit_interval(c + "USDT")) or 8
+    extra["funding_interval_h"] = iv
+    return float(t["markPrice"]), float(t["openInterestValue"]), to_8h(t["fundingRate"], iv), extra
 
 async def snap_okx(c):
     inst = f"{c}-USDT-SWAP"
@@ -41,22 +66,25 @@ async def snap_okx(c):
     extra = {}
     r = await _safe("okx ls", http.get("https://www.okx.com/api/v5/rubik/stat/contracts/long-short-account-ratio", {"ccy": c, "period": "5m"}))
     if r and r.get("data"): extra["ls_account"] = float(r["data"][0][1])
-    return float(mk["markPx"]), float(oi["oiUsd"]), float(fr["fundingRate"]), extra
+    iv = (int(fr["nextFundingTime"]) - int(fr["fundingTime"])) / 3_600_000 if fr.get("nextFundingTime") and fr.get("fundingTime") else 8
+    extra["funding_interval_h"] = iv
+    return float(mk["markPx"]), float(oi["oiUsd"]), to_8h(fr["fundingRate"], iv), extra
 
 async def snap_bitget(c):
     t = (await http.get("https://api.bitget.com/api/v2/mix/market/ticker", {"symbol": c + "USDT", "productType": "usdt-futures"}))["data"][0]
-    px = float(t["markPrice"]); return px, float(t["holdingAmount"]) * px, float(t["fundingRate"]), {}
+    iv = await _safe("bitget fundingInterval", _bitget_interval(c + "USDT")) or 8
+    px = float(t["markPrice"]); return px, float(t["holdingAmount"]) * px, to_8h(t["fundingRate"], iv), {"funding_interval_h": iv}
 
 async def snap_gate(c):
     t = await http.get(f"https://api.gateio.ws/api/v4/futures/usdt/contracts/{c}_USDT")
-    px = float(t["mark_price"]); return px, float(t["position_size"]) * float(t["quanto_multiplier"]) * px, float(t["funding_rate"]), {}
+    iv = float(t.get("funding_interval") or 28800) / 3600
+    px = float(t["mark_price"]); return px, float(t["position_size"]) * float(t["quanto_multiplier"]) * px, to_8h(t["funding_rate"], iv), {"funding_interval_h": iv}
 
-_hl_cache = {}
 async def snap_hyperliquid(c):
     async def load(): return await http.post("https://api.hyperliquid.xyz/info", {"type": "metaAndAssetCtxs"})
     meta, ctx = await http.cached("hl_meta", 60, load)
     x = ctx[[u["name"] for u in meta["universe"]].index(c)]
-    px = float(x["markPx"]); return px, float(x["openInterest"]) * px, float(x["funding"]) * 8, {"premium": float(x["premium"] or 0)}
+    px = float(x["markPx"]); return px, float(x["openInterest"]) * px, to_8h(x["funding"], 1), {"premium": float(x["premium"] or 0), "funding_interval_h": 1}
 
 async def snap_deribit(c):
     if c not in ("BTC", "ETH"): return None
@@ -110,11 +138,11 @@ async def options_summary(c):
         return {"instrument": row["name"], "timestamp_ms": result["timestamp"],
                 "greeks": result.get("greeks"), "mark_iv": result.get("mark_iv")}
 
-    largest = sorted(chain, key=lambda row: -row["oi"])[:6]
+    largest = sorted(chain, key=lambda row: -row["oi"])[:4]
     exchange_greeks = []
     for row in largest:
         exchange_greeks.append(await _safe("Deribit ticker", ticker(row)))
-        await asyncio.sleep(0.35)
+        await asyncio.sleep(1.0)  # Deribit genel uçları için istek sınırına takılmamak üzere
     now_ms = int(time.time() * 1000)
     dv = (await http.get("https://www.deribit.com/api/v2/public/get_volatility_index_data",
                          {"currency": c, "start_timestamp": now_ms - 2 * 86400000, "end_timestamp": now_ms, "resolution": 3600}))["result"]["data"]

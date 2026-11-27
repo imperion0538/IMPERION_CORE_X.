@@ -1,9 +1,9 @@
 """IMPERION Market Data: toplayıcıları, Telegram botunu ve API'yi başlatır."""
-import asyncio, logging
+import asyncio, logging, sys
 from aiohttp import web
-from md import api, config, db, rest, telegram, ws
+from md import api, config, db, orderbook, rest, telegram, ws
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+logging.basicConfig(level=logging.INFO, stream=sys.stdout, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 log = logging.getLogger("main")
 
 async def supervise(fn):
@@ -61,7 +61,7 @@ async def main():
     log.info("API %s portunda; coinler %s", config.PORT, config.COINS)
     asyncio.create_task(selftest())
     asyncio.create_task(writer_watchdog())
-    await asyncio.gather(*[supervise(f) for f in ws.ALL + rest.ALL + telegram.ALL])
+    await asyncio.gather(*[supervise(f) for f in ws.ALL + rest.ALL + [orderbook.poll] + telegram.ALL])
 
 if __name__ == "__main__":
     asyncio.run(main())
