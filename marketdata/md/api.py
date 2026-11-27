@@ -4,6 +4,7 @@ from datetime import timedelta
 from aiohttp import web
 from pathlib import Path
 from . import analysis, card4k, charts, config, db, heatmap, orderbook, state, whales as whale_flow, reports
+from . import intelligence, quality, livebook, ingest, context, outbox
 
 def _key_ok(req):
     if not config.API_KEY: return False
@@ -23,7 +24,9 @@ def _rate_ok(req, limit=60):
 
 @web.middleware
 async def auth(req, handler):
-    if req.path in ("/", "/health", "/panel") or _key_ok(req):
+    if req.path == "/api/db-connections" and not _key_ok(req):
+        return web.json_response({"error": "unauthorized"}, status=401)
+    if req.path in ("/", "/health", "/ready", "/panel") or _key_ok(req):
         return await handler(req)
     if config.PUBLIC_READ and req.method == "GET":
         if not _rate_ok(req): return web.json_response({"error": "rate limited"}, status=429)
@@ -39,7 +42,74 @@ async def health(req):
     stale = [name for name, h in state.stream_health.items()
              if name != "binance_liq" and now - h["last_msg"] > (420 if name == "rest_snapshots" else 120)]
     data_status = "starting" if not state.stream_health else "degraded" if stale else "active"
-    return j({"status": "ok", "data_status": data_status, "stale_streams": stale, "streams": {n: {"age_s": int(now - h["last_msg"]), "reconnects": h["reconnects"], "msgs": h["msgs"]} for n, h in state.stream_health.items()}})
+    return j({"status": "ok", "version": "2.0", "data_status": data_status, "ingest_queue": ingest.QUEUE.qsize(),
+              "ingestion": dict(quality.counters), "stale_streams": stale, "streams": {n: {"age_s": int(now - h["last_msg"]), "reconnects": h["reconnects"], "msgs": h["msgs"]} for n, h in state.stream_health.items()}})
+
+
+async def ready(req):
+    try:
+        writer = await db.is_writer()
+    except Exception:
+        writer = False
+    last = quality.counters.get("last_commit_epoch", 0)
+    ok = writer and time.time()-last < 15 and ingest.QUEUE.qsize() < 10000
+    return web.json_response({"ready": ok, "database_writer": writer, "queue_size": ingest.QUEUE.qsize()}, status=200 if ok else 503)
+
+
+async def intelligence_report(req):
+    coin = _coin(req)
+    if coin not in config.COINS:
+        return web.json_response({"error": "Coin is not monitored"}, status=400)
+    return j(await intelligence.generate(coin))
+
+
+async def data_quality(req):
+    coin = _coin(req)
+    if coin not in config.COINS:
+        return web.json_response({"error": "Coin is not monitored"}, status=400)
+    return j({"trades": quality.snapshot(coin), "orderbooks": livebook.snapshot(coin),
+              "queue_size": ingest.QUEUE.qsize(), "notifications": await outbox.status()})
+
+
+async def live(req):
+    coin = _coin(req)
+    if coin not in config.COINS:
+        return web.json_response({"error": "Coin is not monitored"}, status=400)
+    return j({"coin": coin, "as_of_epoch": time.time(), "price": intelligence.consensus(coin),
+              "quality": quality.snapshot(coin), "orderbooks": livebook.snapshot(coin)})
+
+
+async def forward_evidence(req):
+    from . import archive_store, http
+    coin = _coin(req)
+    if coin not in config.COINS:
+        return web.json_response({"error": "Coin is not monitored"}, status=400)
+    return j(await http.cached("forward-evidence:"+coin, 60, lambda: archive_store.evaluation(coin)))
+
+
+async def research_history(req):
+    coin = _coin(req)
+    if coin not in config.COINS:
+        return web.json_response({"error": "Coin is not monitored"}, status=400)
+    async with db.pool.acquire() as conn:
+        rows = await conn.fetch("SELECT ts,data FROM research_snapshots WHERE coin=$1 ORDER BY ts DESC LIMIT 12", coin)
+    return j([{"ts": r["ts"], "report": json.loads(r["data"])} for r in rows])
+
+
+async def risk(req):
+    try:
+        args = {k: float(req.query[k]) for k in ("equity", "risk_pct", "entry", "stop")}
+        args.update({k: float(req.query[k]) for k in ("fee_bps", "slippage_bps") if k in req.query})
+        return j(context.risk_budget(**args))
+    except (ValueError, KeyError):
+        return web.json_response({"error": "Use finite positive equity, risk_pct (0..100], entry and a different stop; optional fee_bps/slippage_bps"}, status=400)
+
+
+async def replay_check(req):
+    from . import replay
+    if _coin(req) not in config.COINS:
+        return web.json_response({"error": "Coin is not monitored"}, status=400)
+    return j(await replay.check(_coin(req)))
 
 async def an(req): return j(await analysis.analysis(_coin(req)))
 async def live_report(req):
@@ -138,6 +208,13 @@ async def card_png(req):
     return web.Response(body=charts.analysis_card_png(a, h, d), content_type="image/png")
 
 
+async def research_png(req):
+    from . import research_card
+    if _coin(req) not in config.COINS:
+        return web.json_response({"error": "Coin is not monitored"}, status=400)
+    return web.Response(body=await research_card.build(_coin(req)), content_type="image/png")
+
+
 async def card4k_png(req):
     return web.Response(body=await card4k.build(_coin(req)), content_type="image/png")
 
@@ -147,6 +224,10 @@ async def db_conns(req):
 def app():
     a = web.Application(middlewares=[auth])
     a.add_routes([web.get("/", health), web.get("/health", health), web.get("/api/analysis", an), web.get("/api/report", live_report), web.get("/api/heatmap", heat),
+                  web.get("/ready", ready), web.get("/api/intelligence", intelligence_report), web.get("/api/quality", data_quality),
+                  web.get("/api/live", live),
+                  web.get("/api/replay-check", replay_check),
+                  web.get("/api/research4k.png", research_png), web.get("/api/forward-evidence", forward_evidence), web.get("/api/research-history", research_history), web.get("/api/risk", risk),
                   web.get("/api/heatmap.png", heat_png), web.get("/api/liquidations", liq), web.get("/api/whales", whales), web.get("/api/whale-flow", whale_report),
                   web.get("/api/derivatives", deriv), web.get("/api/options", opts), web.get("/api/alts", alts), web.get("/api/cvd", cvd),
                   web.get("/panel", panel), web.get("/api/coins", coins), web.get("/api/depth", depth), web.get("/api/orderbook.png", depth_png),

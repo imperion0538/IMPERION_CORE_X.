@@ -1,7 +1,6 @@
 """Periyodik REST toplayıcılar: OI, funding, long/short, opsiyonlar; dakikalık kovaları veritabanına yazar."""
 import asyncio, collections, json, logging, time
 from datetime import datetime, timezone
-from uuid import uuid4
 from . import config, db, http, option_metrics, state
 
 log = logging.getLogger("rest")
@@ -47,6 +46,8 @@ async def snap_binance(c):
         if r: extra[key] = float(r[0].get("longShortRatio") or r[0].get("buySellRatio"))
     iv = (await _safe("binance fundingInfo", _binance_intervals()) or {}).get(s, 8)
     extra["funding_interval_h"] = iv
+    extra["basis_pct"] = (px / float(pi["indexPrice"]) - 1) * 100
+    extra["next_funding_utc_ms"] = pi.get("nextFundingTime")
     return px, float(oi["openInterest"]) * px, to_8h(pi["lastFundingRate"], iv), extra
 
 async def snap_bybit(c):
@@ -57,6 +58,8 @@ async def snap_bybit(c):
         x = r["result"]["list"][0]; extra["ls_account"] = float(x["buyRatio"]) / max(1e-9, float(x["sellRatio"]))
     iv = await _safe("bybit fundingInterval", _bybit_interval(c + "USDT")) or 8
     extra["funding_interval_h"] = iv
+    extra["basis_pct"] = (float(t["markPrice"]) / float(t["indexPrice"]) - 1) * 100
+    extra["next_funding_utc_ms"] = t.get("nextFundingTime")
     return float(t["markPrice"]), float(t["openInterestValue"]), to_8h(t["fundingRate"], iv), extra
 
 async def snap_okx(c):
@@ -90,7 +93,7 @@ async def snap_hyperliquid(c):
 async def snap_deribit(c):
     if c not in ("BTC", "ETH"): return None
     r = (await http.get("https://www.deribit.com/api/v2/public/get_book_summary_by_instrument", {"instrument_name": f"{c}-PERPETUAL"}))["result"][0]
-    return float(r["mark_price"]), float(r["open_interest"]), float(r.get("funding_8h") or 0), {}
+    return float(r["mark_price"]), float(r["open_interest"]), float(r["funding_8h"]) if r.get("funding_8h") is not None else None, {}
 
 SNAPS = {"binance": snap_binance, "bybit": snap_bybit, "okx": snap_okx, "bitget": snap_bitget, "gate": snap_gate,
          "hyperliquid": snap_hyperliquid, "deribit": snap_deribit}
@@ -107,7 +110,9 @@ async def poll_snapshots():
             async with db.pool.acquire() as cn:
                 await cn.executemany("INSERT INTO deriv_snap (ts, venue, coin, price, oi_usd, funding_8h, extra) VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb) "
                                      "ON CONFLICT (coin, venue, ts) DO UPDATE SET price=EXCLUDED.price, oi_usd=EXCLUDED.oi_usd, funding_8h=EXCLUDED.funding_8h, extra=EXCLUDED.extra", rows)
-        state.stream_health["rest_snapshots"] = {"last_msg": time.time(), "connected": True, "reconnects": 0, "msgs": len(rows)}
+        previous = state.stream_health.get("rest_snapshots", {})
+        state.stream_health["rest_snapshots"] = {"last_msg": time.time() if rows else previous.get("last_msg", 0),
+                                                  "connected": bool(rows), "reconnects": 0, "msgs": len(rows)}
         await asyncio.sleep(300 - time.time() % 300 + 5)
 
 async def options_summary(c):
@@ -161,38 +166,9 @@ async def poll_options():
                     await cn.execute("INSERT INTO options_snap (ts, coin, data) VALUES (date_trunc('minute', now()), $1, $2::jsonb) ON CONFLICT DO NOTHING", c, json.dumps(r))
         await asyncio.sleep(900)
 
-async def flush_buckets():
-    pending = None
-    while True:
-        await asyncio.sleep(10)
-        if pending is None:
-            closed = state.pop_closed_buckets()
-            if not closed:
-                continue
-            rows = [(datetime.fromtimestamp(k[3], UTC), *k[1:3], k[0], *bucket) for k, bucket in closed]
-            pending = uuid4(), rows
-        batch_id, rows = pending
-        try:
-            async with db.pool.acquire() as conn, conn.transaction():
-                claimed = await conn.fetchval(
-                    "INSERT INTO trade_write_batches (id) VALUES ($1) ON CONFLICT DO NOTHING RETURNING true", batch_id)
-                if claimed:
-                    await conn.executemany("""
-                        INSERT INTO trades_1m (ts, venue, market, coin, buy_usd, sell_usd, n, open, high, low, close)
-                        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-                        ON CONFLICT (coin, venue, market, ts) DO UPDATE
-                        SET buy_usd=trades_1m.buy_usd+EXCLUDED.buy_usd, sell_usd=trades_1m.sell_usd+EXCLUDED.sell_usd,
-                            n=trades_1m.n+EXCLUDED.n, high=GREATEST(trades_1m.high,EXCLUDED.high),
-                            low=LEAST(trades_1m.low,EXCLUDED.low), close=EXCLUDED.close
-                    """, rows)
-            pending = None
-        except Exception as e:
-            log.warning("İşlem toplamları yeniden denenecek: %s", type(e).__name__)
-
-
 async def daily_cleanup():
     while True:
         await _safe("cleanup", db.cleanup())
         await asyncio.sleep(86400)
 
-ALL = [poll_snapshots, poll_options, flush_buckets, daily_cleanup]
+ALL = [poll_snapshots, poll_options, daily_cleanup]

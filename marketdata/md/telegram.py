@@ -3,7 +3,7 @@ import asyncio, json, logging, time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 import aiohttp
-from . import analysis, card4k, charts, config, db, fmt, heatmap, http, reports, orderbook, state, whales
+from . import analysis, card4k, charts, config, db, fmt, heatmap, http, reports, orderbook, state, whales, intelligence, outbox, quality
 
 log = logging.getLogger("telegram")
 API = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}"
@@ -103,19 +103,28 @@ async def handle(chat, text):
     if cmd in ("/btc", "/eth", "/sol") or cmd == "/analiz":
         coin = cmd[1:].upper() if cmd != "/analiz" else _args(rest, "24h")[0]
         return await send(chat, fmt.analysis_text(await analysis.analysis(coin)))
+    if cmd == "/kalite":
+        coin = _args(rest, "15m")[0]
+        q = quality.snapshot(coin)
+        lines = [f"<b>{fmt.escape(coin)} veri kalitesi</b>"]
+        for row in q["sources"]:
+            age = f"{row['age_seconds']:.1f} sn" if row["age_seconds"] is not None else "veri yok"
+            lines.append(f"{row['venue']} {row['market']}: {row['status']} · {age}")
+        return await send(chat, "\n".join(lines))
     if cmd == "/arastirma":
         coin = _args(rest, "15m")[0]
         if coin not in config.COINS:
             return await send(chat, f"{coin} canlı izlenmiyor.")
-        return await send(chat, reports.format_report_text(await reports.generate_report(coin)))
+        return await send(chat, intelligence.text(await intelligence.generate(coin)))
     if cmd == "/kart":
         if rest and rest[0].lower() in ("arsiv", "arşiv"):
             return await send_card(chat)
         coin = _args(rest, "24h")[0]
         if rest and rest[-1].lower() == "ozet":
             return await photo(chat, await live_card(coin), f"<b>{coin} canlı özet kartı</b> · 1920×1080")
-        png = await card4k.build(coin)
-        cap = f"<b>{coin}USDT teknik analiz kartı</b> · 4K · {datetime.now(timezone.utc).strftime('%H:%M')} UTC\nKoşullu senaryolar teyit bekler; yatırım tavsiyesi değildir."
+        from . import research_card
+        png = await research_card.build(coin)
+        cap = f"<b>{coin} işlem öncesi araştırma</b> · 4K · {datetime.now(timezone.utc).strftime('%H:%M')} UTC\nKapalı 1s/4s mumlar, akış, karşı kanıt ve veri kapsamı."
         await photo(chat, png, cap)
         return await photo(chat, png, f"{coin}USDT · 3840×2160 PNG (tam çözünürlük)", document=True)
     if cmd == "/derinlik":
@@ -261,28 +270,19 @@ async def broadcast(text):
 
 async def alerts_loop():
     if not (config.TELEGRAM_BOT_TOKEN and config.TELEGRAM_CHAT_IDS and config.ALERTS_ENABLED): return
-    last_cascade = {}
     while True:
         await asyncio.sleep(60)
-        items = []
-        while state.alerts: items.append(state.alerts.popleft())
-        now = time.time()
-        for c in config.COINS:
-            tot = sum(u for t, cc, u, _ in state.recent_liq if cc == c and now - t < 300)
-            if tot >= config.ALERT_CASCADE_USD * config.alert_scale(c) and now - last_cascade.get(c, 0) > 900:
-                last_cascade[c] = now
-                lg = sum(u for t, cc, u, sd in state.recent_liq if cc == c and now - t < 300 and sd == "long")
-                items.append({"type": "cascade", "coin": c, "usd": tot, "long": lg, "short": tot - lg})
-        if not items: continue
-        L = ["<b>🗼 Alarm</b>"]
-        for a in items[:20]:
-            if a["type"] == "liq":
-                L.append(f"{'🚫' if a['side']=='long' else '💸'} {a['coin']} {a['venue']} {a['side']} likidasyonu {fmt.usd(a['usd'])} @ ${a['price']:,.0f}")
-            elif a["type"] == "whale":
-                L.append(f"🐋 {a['coin']} {a['venue']} {a['market']} {'alım' if a['side']=='buy' else 'satım'} {fmt.usd(a['usd'])} @ ${a['price']:,.0f}")
-            else:
-                L.append(f"🌊 {a['coin']} likidasyon dalgası (5 dk): {fmt.usd(a['usd'])} · long {fmt.usd(a['long'])} / short {fmt.usd(a['short'])}")
-        await broadcast("\n".join(L))
+        # Kalıcı gözlemlerden kaskad; süreç yeniden başladığında belleğe bağımlı değil.
+        async with db.pool.acquire() as conn:
+            rows = await conn.fetch("""SELECT coin,sum(usd) usd,
+                sum(usd) FILTER (WHERE side='long') long_usd
+                FROM liquidations WHERE ts>=now()-interval '5 minutes' GROUP BY coin""")
+            for r in rows:
+                if r["usd"] >= config.ALERT_CASCADE_USD * config.alert_scale(r["coin"]):
+                    bucket = int(time.time()//900)
+                    message = (f"<b>🗼 {r['coin']} likidasyon dalgası</b>\n"
+                               f"5 dk gözlenen: {fmt.usd(r['usd'])} · Long {fmt.usd(r['long_usd'] or 0)}")
+                    await outbox.enqueue(conn, f"cascade:{r['coin']}:{bucket}", message)
 
 async def reports_loop():
     if not (config.TELEGRAM_BOT_TOKEN and config.TELEGRAM_CHAT_IDS and config.REPORT_HOURS_UTC): return
@@ -292,15 +292,14 @@ async def reports_loop():
         now = datetime.now(timezone.utc)
         key = (now.date(), now.hour)
         if now.hour in config.REPORT_HOURS_UTC and now.minute < 5 and sent != key:
-            sent = key
-            try: await broadcast(fmt.analysis_text(await analysis.analysis("BTC")))
+            try:
+                await outbox.broadcast(f"scheduled:{key}", intelligence.text(await intelligence.generate("BTC")), 3600)
+                sent = key
             except Exception as e: log.warning("rapor hatası: %s", e)
 
 async def options_alerts():
     if not (config.TELEGRAM_BOT_TOKEN and config.TELEGRAM_CHAT_IDS and config.ALERTS_ENABLED):
         return
-    seen = {}
-    pending = {}
     while True:
         async with db.pool.acquire() as conn:
             for coin in (c for c in config.COINS if c in ("BTC", "ETH")):
@@ -310,9 +309,7 @@ async def options_alerts():
                 )
                 if not rows:
                     continue
-                previous = seen.get(coin)
-                seen[coin] = rows[0]["ts"]
-                if previous is None or previous >= rows[0]["ts"] or len(rows) < 2:
+                if len(rows) < 2:
                     continue
                 current, old = (json.loads(row["data"]) for row in rows)
                 notices = []
@@ -334,20 +331,7 @@ async def options_alerts():
                         notices.append(f"{e['expiry']} imzalı GEX tahmini: {fmt.usd(b)} → {fmt.usd(a)} / %1")
                 if notices:
                     message = f"<b>🗼 {coin} opsiyon alarmı · Deribit</b>\n" + "\n".join(notices)
-                    pending[(coin, rows[0]["ts"])] = (message, set(config.TELEGRAM_CHAT_IDS))
-        for key, (message, chats) in list(pending.items()):
-            _, snapshot = key
-            if (datetime.now(timezone.utc) - snapshot).total_seconds() > 2700:
-                del pending[key]
-                continue
-            for chat in tuple(chats):
-                try:
-                    if await send(chat, message):
-                        chats.remove(chat)
-                except (aiohttp.ClientError, asyncio.TimeoutError):
-                    log.warning("Opsiyon alarmı yeniden denenecek")
-            if not chats:
-                del pending[key]
+                    await outbox.enqueue(conn, f"options:{coin}:{rows[0]['ts'].isoformat()}", message, 2700)
         await asyncio.sleep(60)
 
 

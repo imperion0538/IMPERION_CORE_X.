@@ -17,19 +17,31 @@ async def deriv(coin):
         latest = await c.fetch("SELECT DISTINCT ON (venue) venue, ts, price, oi_usd, funding_8h, extra FROM deriv_snap WHERE coin=$1 AND ts > now() - interval '30 minutes' ORDER BY venue, ts DESC", coin)
         past = {}
         for w, s in WIN.items():
-            past[w] = await c.fetch("SELECT DISTINCT ON (venue) venue, oi_usd FROM deriv_snap WHERE coin=$1 AND ts <= now() - $2::interval AND ts > now() - $2::interval - interval '30 minutes' ORDER BY venue, ts DESC", coin, timedelta(seconds=s))
-    venues = {r["venue"]: {"price": r["price"], "oi_usd": r["oi_usd"], "funding_8h": r["funding_8h"], **json.loads(r["extra"] or "{}")} for r in latest}
-    tot = sum(v["oi_usd"] or 0 for v in venues.values())
+            past[w] = await c.fetch("SELECT DISTINCT ON (venue) venue, oi_usd, price FROM deriv_snap WHERE coin=$1 AND ts <= now() - $2::interval AND ts > now() - $2::interval - interval '30 minutes' ORDER BY venue, ts DESC", coin, timedelta(seconds=s))
+    venues = {r["venue"]: {"snapshot_utc": r["ts"].isoformat(), "age_seconds": max(0, int((datetime.now(UTC)-r["ts"]).total_seconds())), "price": r["price"], "oi_usd": r["oi_usd"], "funding_8h": r["funding_8h"], **json.loads(r["extra"] or "{}")} for r in latest}
+    fresh_venues = {k: v for k, v in venues.items() if v["age_seconds"] <= 420}
+    tot = sum(v["oi_usd"] or 0 for v in fresh_venues.values())
     oi_chg = {}
     for w, rows in past.items():
         prev = {r["venue"]: r["oi_usd"] for r in rows}
-        common = [v for v in venues if v in prev and prev[v]]
+        common = [v for v in fresh_venues if v in prev and prev[v] and fresh_venues[v]["oi_usd"] is not None]
         if common:
             a = sum(venues[v]["oi_usd"] for v in common); b = sum(prev[v] for v in common)
             oi_chg[w] = (a / b - 1) * 100
-    fw = sum((v["funding_8h"] or 0) * (v["oi_usd"] or 0) for v in venues.values()) / tot if tot else None
-    return {"venues": venues, "oi_total_usd": tot, "oi_change_pct": oi_chg,
-            "funding_8h_weighted": fw, "funding_ann_pct": fw * 3 * 365 * 100 if fw is not None else None}
+    known = [v for v in fresh_venues.values() if v["funding_8h"] is not None and v["oi_usd"]]
+    funding_oi = sum(v["oi_usd"] for v in known)
+    fw = sum(v["funding_8h"] * v["oi_usd"] for v in known) / funding_oi if funding_oi else None
+    base_changes = {}
+    for w, rows in past.items():
+        prior = {r["venue"]: r for r in rows}
+        common = [v for v in fresh_venues if v in prior and venues[v]["price"] and prior[v]["price"]
+                  and venues[v]["oi_usd"] and prior[v]["oi_usd"]]
+        before = sum(prior[v]["oi_usd"] / prior[v]["price"] for v in common)
+        after = sum(venues[v]["oi_usd"] / venues[v]["price"] for v in common)
+        base_changes[w] = {"pct": (after/before-1)*100 if before else None, "venues": common,
+                           "method": "OI USD / mark-price proxy; inverse-contract exposure is approximate"}
+    return {"venues": venues, "fresh_venues": list(fresh_venues), "oi_total_usd": tot if fresh_venues else None, "oi_change_pct": oi_chg,
+            "oi_base_proxy_change": base_changes, "funding_covered_oi_usd": funding_oi, "funding_8h_weighted": fw, "funding_ann_pct": fw * 3 * 365 * 100 if fw is not None else None}
 
 async def flows(coin):
     out = {}
@@ -53,7 +65,7 @@ async def flows(coin):
 
 def coinbase_premium(coin):
     cb = state.last_price.get(("coinbase", "spot", coin)); bn = state.last_price.get(("binance", "spot", coin))
-    if not cb or not bn or time.time() - cb[1] > 300 or time.time() - bn[1] > 300: return None
+    if not cb or not bn or time.time() - cb[1] > 30 or time.time() - bn[1] > 30 or abs(cb[1]-bn[1]) > 10: return None
     return (cb[0] / bn[0] - 1) * 100
 
 async def options(coin):
@@ -118,7 +130,7 @@ def summarize(a):
     for m, lbl in (("spot", "Spot"), ("perp", "Perp")):
         if m in f4["cvd"]: s.append(f"{lbl} CVD (4s): ${f4['cvd'][m]['delta']/1e6:+.1f}M.")
     if a.get("coinbase_premium_pct") is not None:
-        cp = a["coinbase_premium_pct"]; s.append(f"Coinbase primi {cp:+.3f}% " + ("(ABD tarafında alım iştahı)." if cp > 0.03 else "(ABD tarafında satış baskısı)." if cp < -0.03 else "(nötr)."))
+        cp = a["coinbase_premium_pct"]; s.append(f"Coinbase USD ile Binance USDT spot son işlem fiyat farkı %{cp:+.3f}. USD/USDT kur etkisi dahil.")
     h = a.get("heatmap_24h")
     if h and h.get("clusters"):
         lo = min([c for c in h["clusters"] if c["side"] == "long"], key=lambda c: abs(c["dist_pct"]), default=None)
@@ -132,8 +144,9 @@ def summarize(a):
         if bw and aw:
             s.append(f"En büyük defter duvarları: alış ${bw[0]['price']:,.0f} ({bw[0]['dist_pct']:+.1f}%, ${bw[0]['usd']/1e6:.1f}M), satış ${aw[0]['price']:,.0f} ({aw[0]['dist_pct']:+.1f}%, ${aw[0]['usd']/1e6:.1f}M).")
     o = a.get("options")
-    if o and o.get("expiries"):
-        e = o["expiries"][0]; s.append(f"En yakın büyük opsiyon vadesi {e['expiry']}: max pain ${e['max_pain']:,.0f}, put/call {e['put_call']:.2f}. DVOL {o.get('dvol') or 0:.1f}.")
+    if o and not o.get("stale") and o.get("expiries"):
+        dvol = f"{o['dvol']:.1f}" if o.get("dvol") is not None else "veri yok"
+        e = o["expiries"][0]; s.append(f"En yakın büyük opsiyon vadesi {e['expiry']}: max pain ${e['max_pain']:,.0f}, put/call {e['put_call']:.2f}. DVOL {dvol}.")
     return s
 
 async def price_structure(coin):

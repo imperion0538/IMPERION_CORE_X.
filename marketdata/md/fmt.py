@@ -118,3 +118,5 @@ def depth_text(coin, d):
     L += ["", "<b>Satış duvarları</b>"] + [f"${w['price']:,.2f} ({w['dist_pct']:+.2f}%) {usd(w['usd'])}" for w in d["walls"]["ask"]]
     L += ["", "Dengesizlik +1: tamamen alış, −1: tamamen satış. Kapsam: " + ", ".join(f"{escape(k)} ±%{v['depth_pct']:.1f}" for k, v in d["venues"].items())]
     return "\n".join(L)
+
+HELP += "\n/arastirma BTC — Çok katmanlı işlem öncesi araştırma, veri kapsamı ve karşı kanıt\n/kalite BTC — Canlı kaynak ve kayıt sağlığı"

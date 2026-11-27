@@ -23,6 +23,11 @@
   .charts figure { margin:0; background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:8px; min-width:0 }
   .charts img { width:100%; display:block; border-radius:4px }
   figcaption { color:var(--muted); font-size:12px; padding:6px 4px 0 }
+  a { color:#72dbb9 } summary { cursor:pointer } .panel-note { margin:12px 0; color:var(--muted) }
+  .research-section { margin-top:16px; border-top:1px solid var(--line); padding-top:12px }
+  .research-section h3 { margin:0; font-size:15px }
+  th, td { padding:5px 10px 5px 0; text-align:left; font-variant-numeric:tabular-nums }
+  .table-wrap { overflow:auto } table { width:100%; border-collapse:collapse }
   ul { padding-left:18px; margin:6px 0 0 } li { margin:2px 0 }
 </style>
 </head>
@@ -35,7 +40,25 @@
     <button id="refresh" type="button">Yenile</button>
   </div>
 </header>
-<div><span class="price" id="price">—</span> <span class="chg" id="chg"></span></div>
+<div><span class="price" id="price">—</span> <span class="chg" id="chg"></span> <span class="muted" id="live-clock"></span></div>
+<section class="tile" style="margin-top:18px;border-color:#26a69a">
+  <h2 style="margin:0">İşlem öncesi araştırma</h2>
+  <p class="muted" id="research-time">Veri kalitesi ve karşı kanıt yükleniyor…</p>
+  <div class="grid" id="research-tiles"></div>
+  <div class="charts"><div><b>Gözlemler</b><ul id="research-observations"></ul></div>
+    <div><b>Karşı kanıt / eksikler</b><ul id="research-blockers"></ul></div></div>
+  <div class="charts research-section">
+    <div><h3>Makro takvim, ETF ve haberler</h3><ul id="public-context"></ul></div>
+    <div><h3>İzlenecek fiyat seviyeleri</h3><ul id="watch-conditions"></ul></div>
+  </div>
+  <details class="research-section"><summary>Son büyük işlemler ve fiyat tepkisi</summary>
+    <p class="muted" id="whale-meta"></p><div class="table-wrap"><table><thead><tr><th>TSİ</th><th>Borsa</th><th>Taraf</th><th>Tutar</th><th>5 dk fiyat tepkisi</th></tr></thead><tbody id="recent-whales"></tbody></table></div>
+  </details>
+  <details class="research-section"><summary>Kaynaklar, zaman dilimleri ve opsiyonlar</summary>
+    <pre id="research-details" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre></details>
+  <p><a id="research-card" target="_blank" rel="noopener" style="color:#6ef3a4">4K araştırma kartını aç</a>
+     · <a id="research-json" target="_blank" rel="noopener" style="color:#6ef3a4">Tüm ölçümleri JSON görüntüle</a></p>
+</section>
 <div class="grid" id="tiles"></div>
 <div class="tile"><div class="k">Özet</div><ul id="summary"></ul></div>
 <div class="charts">
@@ -44,7 +67,7 @@
   <figure><img id="img-cvd" alt="CVD grafiği"><figcaption>Spot ve perp CVD, son 24 saat</figcaption></figure>
   <figure><img id="img-liq" alt="Gerçekleşen likidasyonlar"><figcaption>Gerçekleşen likidasyonlar</figcaption></figure>
 </div>
-<p class="muted">Veriler bilgilendirme amaçlıdır, yatırım tavsiyesi değildir. Sayfa 60 saniyede bir yenilenir.</p>
+<p class="muted">Veriler bilgilendirme amaçlıdır, yatırım tavsiyesi değildir. Panel açıkken fiyat 3 saniyede, araştırma 15 saniyede, grafikler 60 saniyede bir güncellenir.</p>
 </div>
 <script>
 const $ = (id) => document.getElementById(id);
@@ -57,14 +80,100 @@ function usd(v) {
   return s + "$" + a.toFixed(0);
 }
 function pct(v, d) { if (v === null || v === undefined) return "—"; return (v > 0 ? "+" : "") + v.toFixed(d === undefined ? 2 : d) + "%"; }
-function cls(v) { return (v || 0) >= 0 ? "up" : "down"; }
+function cls(v) { return v == null || v === 0 ? "" : v > 0 ? "up" : "down"; }
 function tile(k, v, c) {
   const d = document.createElement("div"); d.className = "tile";
   const a = document.createElement("div"); a.className = "k"; a.textContent = k;
   const b = document.createElement("div"); b.className = "v" + (c ? " " + c : ""); b.textContent = v;
   d.append(a, b); return d;
 }
+const selectedCoin = () => $("coin").value || "BTC";
+const tsi = (value, date=false) => new Date(value).toLocaleString("tr-TR", {
+  timeZone:"Europe/Istanbul", ...(date ? {day:"2-digit", month:"2-digit", year:"numeric"} : {}), hour:"2-digit", minute:"2-digit", second:"2-digit"
+}) + " TSİ";
+const list = values => values.map(v => { const li = document.createElement("li"); li.textContent = v; return li; });
+const translated = {live:"canlı", missing:"veri yok", stale:"eski", resync:"eşitleme bekleniyor"};
+function showWhales(flow) {
+  const threshold = flow?.configured_trade_threshold_usd;
+  $("whale-meta").textContent = flow
+    ? "Son 15 dakika · büyük işlem eşiği " + usd(threshold) + (flow.trades.length ? "" : " · gözlenen işlem yok")
+    : "Büyük işlem verisine ulaşılamadı.";
+  $("recent-whales").replaceChildren(...(flow?.trades ?? []).slice(0, 10).map(t => {
+    const tr = document.createElement("tr");
+    for (const v of [tsi(t.ts), t.venue + " " + t.market, t.side === "buy" ? "Alım" : "Satım", usd(t.usd), pct(t.reaction_pct?.["5m"])]) {
+      const td = document.createElement("td"); td.textContent = v; tr.append(td);
+    }
+    return tr;
+  }));
+}
+let researchRequest;
+async function loadResearch() {
+  const coin = selectedCoin();
+  if (researchRequest?.coin === coin) return;
+  researchRequest?.controller.abort();
+  const controller = new AbortController(); researchRequest = {coin, controller};
+  $("research-card").href = "api/research4k.png?coin=" + encodeURIComponent(coin);
+  $("research-json").href = "api/intelligence?coin=" + encodeURIComponent(coin);
+  try {
+    const response = await fetch("api/intelligence?coin=" + encodeURIComponent(coin), {signal:controller.signal});
+    if (!response.ok) throw new Error("HTTP " + response.status);
+    const r = await response.json();
+    if (coin !== ($("coin").value || "BTC")) return;
+    $("research-time").textContent = r.coin + " · " + tsi(r.generated_utc, true);
+    const q = r.quality, a = r.assessment;
+    const spot = r.flows["15m"]?.markets.spot, perp = r.flows["15m"]?.markets.perp;
+    $("research-tiles").replaceChildren(
+      tile("Verilerin değerlendirmesi", a.state),
+      tile("Canlı işlem kaynakları", q.live_sources + "/" + q.expected_sources),
+      tile("Canlı L2 defteri", r.live_orderbooks.live_sources + "/3"),
+      tile("15 dk spot / perp delta", usd(spot?.delta_usd) + " / " + usd(perp?.delta_usd)),
+      tile("Kalıcı kayıt kuyruğu", q.queue_size + " olay"),
+      tile("Benzer geçmiş örnek", r.historical_evidence.samples ?? "—")
+    );
+    $("research-observations").replaceChildren(...list(a.observations));
+    $("research-blockers").replaceChildren(...list([...a.counter_evidence, ...a.blockers].length
+      ? [...a.counter_evidence, ...a.blockers] : ["İzlenen ölçümlerde çelişki görülmedi."]));
+    $("public-context").replaceChildren(...list(r.context_summary_tr?.length ? r.context_summary_tr : ["Kaynak özeti alınamadı."]));
+    $("watch-conditions").replaceChildren(...list(r.watch_conditions?.length
+      ? r.watch_conditions.map(c => c.name + " · " + c.level.toLocaleString("tr-TR") + " — " + c.confirmation + " " + c.invalidation)
+      : ["Güncel saatlik mum bekleniyor."]));
+    showWhales(r.large_trades);
+    const lines = q.sources.map(v => `${v.venue} ${v.market}: ${translated[v.status] || v.status} · son işlem ${v.age_seconds ?? '—'} sn önce · p95 gecikme ${v.latency_p95_ms ?? '—'} ms`);
+    for (const [name, f] of Object.entries(r.timeframes)) lines.push(`${name}: ${f.regime} · RSI ${f.rsi14.toFixed(1)} · ATR %${f.atr_pct.toFixed(2)} · ${f.source}`);
+    for (const v of r.live_orderbooks.sources) if (v.status === "live") lines.push(`${v.venue} ${v.market}: spread ${v.spread_bps.toFixed(2)} bp; L2 kademeleri sınırlıdır.`);
+    if (r.options) lines.push(`Opsiyonlar: ${r.options.stale ? 'ESKİ' : 'mevcut'} · DVOL ${r.options.dvol ?? '—'} · GEX bayi pozisyonu değildir.`);
+    $("research-details").textContent = lines.join("\n");
+
+  } catch (e) {
+    if (controller.signal.aborted || coin !== selectedCoin()) return;
+    $("research-time").textContent = coin + " araştırması güncellenemedi: " + e.message;
+    $("public-context").replaceChildren(); $("watch-conditions").replaceChildren(); showWhales(null);
+    $("research-details").textContent = "";
+    $("research-tiles").replaceChildren();
+    $("research-observations").replaceChildren();
+    $("research-blockers").replaceChildren();
+  } finally { if (researchRequest?.controller === controller) researchRequest = null; }
+}
+let liveBusy = false;
+async function loadLive() {
+  if (liveBusy) return;
+  liveBusy = true;
+  const coin = $("coin").value || "BTC";
+  try {
+    const response = await fetch("api/live?coin=" + encodeURIComponent(coin));
+    if (!response.ok) throw new Error("HTTP " + response.status);
+    const r = await response.json();
+    if (coin !== ($("coin").value || "BTC")) return;
+    if (r.price.reference !== null) {
+      $("price").textContent = "$" + r.price.reference.toLocaleString("en-US", {maximumFractionDigits:2});
+      $("live-clock").textContent = "Canlı borsa medyanı · " + tsi(r.as_of_epoch*1000);
+    } else { $("price").textContent = "—"; $("live-clock").textContent = "Güncel fiyat akışı yok"; }
+  } catch (e) { if (coin === selectedCoin()) { $("price").textContent = "—"; $("live-clock").textContent = "Canlı akış güncellenemedi"; } }
+  finally { liveBusy = false; }
+}
 async function load() {
+  loadResearch();
+  loadLive();
   const coin = $("coin").value || "BTC", win = $("win").value, t = Date.now();
   $("img-heat").src = "api/heatmap.png?coin=" + coin + "&window=" + win + "&t=" + t;
   $("img-ob").src = "api/orderbook.png?coin=" + coin + "&hours=4&t=" + t;
@@ -75,8 +184,8 @@ async function load() {
       fetch("api/analysis?coin=" + coin).then(r => r.json()),
       fetch("api/report?coin=" + coin).then(r => r.ok ? r.json() : null).catch(() => null),
     ]);
+    if (coin !== selectedCoin()) return;
     $("ts").textContent = a.generated_utc + " UTC";
-    $("price").textContent = "$" + a.price.toLocaleString("en-US", { maximumFractionDigits: 2 });
     const pc = a.price_change_pct;
     $("chg").replaceChildren(...["1h", "4h", "24h"].map((w) => { const s = document.createElement("span"); s.className = cls(pc[w]); s.textContent = w + " " + pct(pc[w]); return s; }));
     const d = a.derivatives, f = a.flows["4h"], ob = a.orderbook;
@@ -106,7 +215,9 @@ async function load() {
     $("tiles").replaceChildren(...tiles);
     $("summary").replaceChildren(...a.summary.map((s) => { const li = document.createElement("li"); li.textContent = s; return li; }));
   } catch (e) {
+    if (coin !== selectedCoin()) return;
     $("ts").textContent = "Veri alınamadı: " + e.message;
+    for (const id of ["chg", "tiles", "summary"]) $(id).replaceChildren();
   }
 }
 (async () => {
@@ -116,11 +227,17 @@ async function load() {
   } catch (e) {
     $("coin").replaceChildren(new Option("BTC", "BTC"));
   }
-  $("coin").addEventListener("change", load);
+  $("coin").addEventListener("change", () => {
+    for (const id of ["price","chg","tiles","summary","research-tiles","research-observations","research-blockers","public-context","watch-conditions","recent-whales","research-details","whale-meta"]) $(id).replaceChildren();
+    $("research-time").textContent = selectedCoin() + " araştırması yükleniyor…";
+    load();
+  });
   $("win").addEventListener("change", load);
   $("refresh").addEventListener("click", load);
   load();
   setInterval(load, 60000);
+  setInterval(loadResearch, 15000);
+  setInterval(loadLive, 3000);
 })();
 </script>
 </body></html>

@@ -2,38 +2,28 @@
 import asyncio, json, logging, time
 from datetime import datetime, timezone
 import aiohttp
-from . import config, db, state
+from . import config, db, state, ingest
 
 log = logging.getLogger("ws")
 UTC = timezone.utc
 
+class ResyncRequired(Exception):
+    """Defter zinciri doğrulanamadı; yeni bağlantı ve snapshot gerekir."""
+
 async def save_liq(venue, coin, side, price, qty, ts_ms):
-    usd = price * qty
-    state.recent_liq.append((ts_ms / 1000, coin, usd, side))
-    async with db.pool.acquire() as c:
-        await c.execute("INSERT INTO liquidations (ts, venue, coin, side, price, qty, usd) VALUES ($1,$2,$3,$4,$5,$6,$7)",
-                        datetime.fromtimestamp(ts_ms / 1000, UTC), venue, coin, side, price, qty, usd)
-    if usd >= config.ALERT_LIQ_USD * config.alert_scale(coin):
-        state.alerts.append({"type": "liq", "venue": venue, "coin": coin, "side": side, "price": price, "usd": usd, "ts": ts_ms / 1000})
+    await ingest.submit("liquidation", coin, venue, "perp", ts_ms, price, qty, side)
 
-async def trade(coin, venue, market, ts_ms, price, qty, is_buy):
-    usd = price * qty
-    state.add_trade(coin, venue, market, ts_ms, price, usd, is_buy)
-    if usd >= config.whale_threshold(coin):
-        async with db.pool.acquire() as c:
-            await c.execute("INSERT INTO whale_trades (ts, venue, market, coin, side, price, usd) VALUES ($1,$2,$3,$4,$5,$6,$7)",
-                            datetime.fromtimestamp(ts_ms / 1000, UTC), venue, market, coin, "buy" if is_buy else "sell", price, usd)
-        if usd >= config.ALERT_WHALE_USD * config.alert_scale(coin):
-            state.alerts.append({"type": "whale", "venue": venue, "market": market, "coin": coin, "side": "buy" if is_buy else "sell",
-                                 "price": price, "usd": usd, "ts": ts_ms / 1000})
+async def trade(coin, venue, market, ts_ms, price, qty, is_buy, native_id=None):
+    await ingest.submit("trade", coin, venue, market, ts_ms, price, qty,
+                        "buy" if is_buy else "sell", native_id)
 
-async def run_stream(name, url, on_open, on_msg, ping=None, ping_every=20):
+async def run_stream(name, url, on_open, on_msg, ping=None, ping_every=20, on_disconnect=None):
     """Kopan bağlantıyı üstel bekleme ile yeniden kuran genel WebSocket döngüsü."""
     backoff = 1
     h = state.stream_health.setdefault(name, {"last_msg": 0, "connected": False, "reconnects": 0, "msgs": 0})
     while True:
         try:
-            async with aiohttp.ClientSession() as s:
+            async with aiohttp.ClientSession(trust_env=True) as s:
                 async with s.ws_connect(url, heartbeat=30, max_msg_size=0) as ws:
                     log.info("%s bağlandı", name); h["connected"] = True; backoff = 1
                     if on_open: await on_open(ws)
@@ -45,18 +35,25 @@ async def run_stream(name, url, on_open, on_msg, ping=None, ping_every=20):
                             msg = None
                         if ping and time.time() - last_ping >= ping_every:
                             await ping(ws); last_ping = time.time()
-                        if msg is None: continue
+                        if msg is None:
+                            if time.time() - h["last_msg"] > max(120, ping_every * 3):
+                                break
+                            continue
                         if msg.type == aiohttp.WSMsgType.TEXT:
                             if msg.data in ("pong", "ping"): continue
                             state.touch(name)
                             try:
                                 await on_msg(ws, json.loads(msg.data))
+                            except ResyncRequired:
+                                break
                             except Exception as e:  # tek mesaj hatası akışı durdurmasın
                                 log.warning("%s mesaj hatası: %s", name, e)
                         elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR, aiohttp.WSMsgType.CLOSE):
                             break
         except Exception as e:
             log.warning("%s bağlantı hatası: %s", name, e)
+        if on_disconnect:
+            on_disconnect()
         h["connected"] = False; h["reconnects"] += 1
         await asyncio.sleep(backoff); backoff = min(backoff * 2, 60)
 
@@ -72,7 +69,7 @@ async def run_rotating(name, urls, on_msg, silent_after=45):
         url = proven or urls[i % len(urls)]
         got = False
         try:
-            async with aiohttp.ClientSession() as s:
+            async with aiohttp.ClientSession(trust_env=True) as s:
                 async with s.ws_connect(url, heartbeat=30, max_msg_size=0) as ws:
                     log.info("%s bağlandı: %s", name, url); h["connected"] = True; h["url"] = url
                     while True:
@@ -100,7 +97,7 @@ async def binance_futures_trades():
     async def on_msg(ws, d):
         d = d.get("data", d)
         if d.get("e") == "aggTrade" and d["s"] in m:
-            await trade(m[d["s"]], "binance", "perp", d["T"], float(d["p"]), float(d["q"]), not d["m"])
+            await trade(m[d["s"]], "binance", "perp", d["T"], float(d["p"]), float(d["q"]), not d["m"], d["a"])
     await run_rotating("binance_perp", [f"{b}/stream?streams={streams}" for b in BN_FUT_BASES], on_msg)
 
 async def binance_futures_liq():
@@ -120,7 +117,7 @@ async def binance_spot():
     async def on_msg(ws, d):
         d = d.get("data", d)
         if d.get("e") == "aggTrade" and d["s"] in m:
-            await trade(m[d["s"]], "binance", "spot", d["T"], float(d["p"]), float(d["q"]), not d["m"])
+            await trade(m[d["s"]], "binance", "spot", d["T"], float(d["p"]), float(d["q"]), not d["m"], d["a"])
     await run_stream("binance_spot", f"wss://stream.binance.com:9443/stream?streams={streams}", None, on_msg)
 
 # ---- Bybit
@@ -133,7 +130,7 @@ async def bybit():
         topic = d.get("topic", "")
         if topic.startswith("publicTrade."):
             for t in d["data"]:
-                if t["s"] in m: await trade(m[t["s"]], "bybit", "perp", int(t["T"]), float(t["p"]), float(t["v"]), t["S"] == "Buy")
+                if t["s"] in m: await trade(m[t["s"]], "bybit", "perp", int(t["T"]), float(t["p"]), float(t["v"]), t["S"] == "Buy", t.get("i"))
         elif topic.startswith("allLiquidation."):
             for t in d["data"]:
                 # Bybit: S=Buy uzun pozisyonun likide olduğunu bildirir
@@ -143,7 +140,7 @@ async def bybit():
 # ---- OKX
 async def load_okx_ctval():
     try:
-        async with aiohttp.ClientSession() as s:
+        async with aiohttp.ClientSession(trust_env=True) as s:
             async with s.get("https://www.okx.com/api/v5/public/instruments", params={"instType": "SWAP"}) as r:
                 for i in (await r.json())["data"]:
                     if i["instId"].endswith("-USDT-SWAP"): config.OKX_CTVAL[i["instId"].split("-")[0]] = float(i["ctVal"])
@@ -161,7 +158,7 @@ async def okx():
         if ch == "trades" and "data" in d:
             for t in d["data"]:
                 c = inst.get(t["instId"])
-                if c: await trade(c, "okx", "perp", int(t["ts"]), float(t["px"]), float(t["sz"]) * config.OKX_CTVAL[c], t["side"] == "buy")
+                if c: await trade(c, "okx", "perp", int(t["ts"]), float(t["px"]), float(t["sz"]) * config.OKX_CTVAL[c], t["side"] == "buy", t.get("tradeId"))
         elif ch == "liquidation-orders" and "data" in d:
             for blk in d["data"]:
                 c = inst.get(blk.get("instId"))
@@ -179,7 +176,7 @@ async def coinbase():
         if d.get("type") == "match" and d.get("product_id") in prods:
             ts = datetime.fromisoformat(d["time"].replace("Z", "+00:00")).timestamp() * 1000
             # Coinbase'de "side" maker tarafıdır: maker sell = taker alım
-            await trade(prods[d["product_id"]], "coinbase", "spot", ts, float(d["price"]), float(d["size"]), d["side"] == "sell")
+            await trade(prods[d["product_id"]], "coinbase", "spot", ts, float(d["price"]), float(d["size"]), d["side"] == "sell", d.get("trade_id"))
     await run_stream("coinbase", "wss://ws-feed.exchange.coinbase.com", on_open, on_msg)
 
 # ---- Hyperliquid
@@ -192,7 +189,36 @@ async def hyperliquid():
         if d.get("channel") == "trades":
             for t in d["data"]:
                 if t["coin"] in config.COINS:
-                    await trade(t["coin"], "hyperliquid", "perp", int(t["time"]), float(t["px"]), float(t["sz"]), t["side"] == "B")
+                    await trade(t["coin"], "hyperliquid", "perp", int(t["time"]), float(t["px"]), float(t["sz"]), t["side"] == "B", t.get("tid", t.get("hash")))
     await run_stream("hyperliquid", "wss://api.hyperliquid.xyz/ws", on_open, on_msg, ping, 45)
 
-ALL = [binance_futures_trades, binance_futures_liq, binance_spot, bybit, okx, coinbase, hyperliquid]
+async def bybit_spot():
+    symbols = {f"{c}USDT": c for c in config.COINS}
+    async def on_open(ws):
+        await ws.send_json({"op": "subscribe", "args": [f"publicTrade.{s}" for s in symbols]})
+    async def ping(ws):
+        await ws.send_json({"op": "ping"})
+    async def on_msg(ws, d):
+        if d.get("topic", "").startswith("publicTrade."):
+            for t in d.get("data", []):
+                if t["s"] in symbols:
+                    await trade(symbols[t["s"]], "bybit", "spot", int(t["T"]), float(t["p"]),
+                                float(t["v"]), t["S"] == "Buy", t.get("i"))
+    await run_stream("bybit_spot", "wss://stream.bybit.com/v5/public/spot", on_open, on_msg, ping)
+
+async def okx_spot():
+    symbols = {f"{c}-USDT": c for c in config.COINS}
+    async def on_open(ws):
+        await ws.send_json({"op": "subscribe", "args": [{"channel": "trades", "instId": s} for s in symbols]})
+    async def ping(ws):
+        await ws.send_str("ping")
+    async def on_msg(ws, d):
+        if d.get("arg", {}).get("channel") == "trades":
+            for t in d.get("data", []):
+                if t["instId"] in symbols:
+                    await trade(symbols[t["instId"]], "okx", "spot", int(t["ts"]), float(t["px"]),
+                                float(t["sz"]), t["side"] == "buy", t.get("tradeId"))
+    await run_stream("okx_spot", "wss://ws.okx.com/ws/v5/public", on_open, on_msg, ping, 25)
+
+ALL = [binance_futures_trades, binance_futures_liq, binance_spot, bybit, okx, coinbase,
+       hyperliquid, bybit_spot, okx_spot]

@@ -1,7 +1,7 @@
 """IMPERION Market Data: toplayıcıları, Telegram botunu ve API'yi başlatır."""
 import asyncio, logging, sys
 from aiohttp import web
-from md import api, config, db, orderbook, rest, telegram, ws
+from md import api, config, db, orderbook, rest, telegram, ws, ingest, livebook, outbox, intelligence
 
 logging.basicConfig(level=logging.INFO, stream=sys.stdout, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 log = logging.getLogger("main")
@@ -10,7 +10,7 @@ async def supervise(fn):
     while True:
         try:
             await fn()
-            if fn in telegram.ALL: return  # yapılandırma yoksa sessizce biter
+            if fn in telegram.ALL or fn is outbox.run: return  # yapılandırma yoksa sessizce biter
         except Exception:
             log.exception("%s çöktü, 10 sn sonra yeniden başlıyor", fn.__name__)
         await asyncio.sleep(10)
@@ -61,7 +61,8 @@ async def main():
     log.info("API %s portunda; coinler %s", config.PORT, config.COINS)
     asyncio.create_task(selftest())
     asyncio.create_task(writer_watchdog())
-    await asyncio.gather(*[supervise(f) for f in ws.ALL + rest.ALL + [orderbook.poll] + telegram.ALL])
+    await asyncio.gather(*[supervise(f) for f in ws.ALL + livebook.ALL + rest.ALL
+                          + [ingest.run, ingest.cleanup, orderbook.poll, outbox.run, intelligence.archive] + telegram.ALL])
 
 if __name__ == "__main__":
     asyncio.run(main())
