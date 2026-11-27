@@ -36,11 +36,35 @@ def analysis_text(a):
         L.append(f"{w}{coverage_note(ws_)}: liq L {usd(lq['long'])} / S {usd(lq['short'])} · balina net {usd(wh['net_usd'])} · CVD spot {usd(cv.get('spot', {}).get('delta'))} perp {usd(cv.get('perp', {}).get('delta'))}")
     return "\n".join(L)
 
+def whale_flow_text(report):
+    c = report["coverage"]
+    lines = [f"<b>{escape(report['coin'])} büyük işlem akışı</b> · {report['window']} · {report['generated_utc'][11:16]} UTC"]
+    if report["min_price"] is not None:
+        lines.append(f"Fiyat bölgesi: ${report['min_price']:,.2f} – ${report['max_price']:,.2f}")
+    for row in c["sources"]:
+        lines.append(f"{escape(row['venue'])} {escape(row['market'])}: {row['observed_minutes']}/{c['expected_minutes']} kapalı dakika")
+    if not c["sources"]:
+        lines.append("Kapalı dakikalık işlem kaydı yok.")
+    for row in report["by_venue_market"]:
+        lines.append(f"{escape(row['venue'])} {escape(row['market'])}: alış {usd(row['buy_usd'])} ({row['buy_count']}) · "
+                     f"satış {usd(row['sell_usd'])} ({row['sell_count']}) · net {usd(row['net_usd'])}")
+    if not report["trades"]:
+        lines.append("Seçili aralıkta kaydedilmiş büyük işlem yok.")
+    for trade in report["trades"]:
+        reaction = " · ".join(f"{w} {pct(v)}" for w, v in trade["reaction_pct"].items())
+        side = "alış" if trade["side"] == "buy" else "satış"
+        lines.append(f"{trade['ts'][11:19]} {escape(trade['venue'])}/{escape(trade['market'])} "
+                     f"{side} {usd(trade['usd'])} @ ${trade['price']:,.2f} · {reaction}")
+    lines.append("Tepki: aynı borsanın ilgili dakika kapanışı. —: kapanış kaydı yok.")
+    return "\n".join(lines)
+
+
 HELP = """<b>IMPERION Market Data</b>
 /btc · /eth · /sol — tam analiz
 /analiz COIN — tam analiz
 /isi [COIN] [1s|4s|24s|7g|30g] — tahmini likidasyon ısı haritası
 /likidasyon [COIN] [1s|4s|24s|7g] — gerçekleşen likidasyonlar
+/akis [COIN] [5m|15m|1h|4h] [alt_fiyat üst_fiyat] — akış ve fiyat tepkisi
 /balina [COIN] [1s|4s|24s] — büyük işlemler
 /oi [COIN] — borsa bazında OI ve funding
 /ls [COIN] — long/short oranları

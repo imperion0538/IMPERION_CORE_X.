@@ -1,8 +1,8 @@
 """HTTP API: Claude ve diğer istemciler için. /health dışındaki uçlar X-API-Key ister."""
-import hmac, json, time
+import hmac, json, math, time
 from datetime import timedelta
 from aiohttp import web
-from . import analysis, charts, config, db, heatmap, state
+from . import analysis, charts, config, db, heatmap, state, whales as whale_flow
 
 def _key_ok(req):
     if not config.API_KEY: return False
@@ -35,7 +35,10 @@ def j(data): return web.Response(text=json.dumps(data, default=str), content_typ
 
 async def health(req):
     now = time.time()
-    return j({"status": "ok", "streams": {n: {"age_s": int(now - h["last_msg"]), "reconnects": h["reconnects"], "msgs": h["msgs"]} for n, h in state.stream_health.items()}})
+    stale = [name for name, h in state.stream_health.items()
+             if name != "binance_liq" and now - h["last_msg"] > (420 if name == "rest_snapshots" else 120)]
+    data_status = "starting" if not state.stream_health else "degraded" if stale else "active"
+    return j({"status": "ok", "data_status": data_status, "stale_streams": stale, "streams": {n: {"age_s": int(now - h["last_msg"]), "reconnects": h["reconnects"], "msgs": h["msgs"]} for n, h in state.stream_health.items()}})
 
 async def an(req): return j(await analysis.analysis(_coin(req)))
 async def heat(req):
@@ -52,6 +55,21 @@ async def whales(req):
         rows = await c.fetch("SELECT ts, venue, market, side, price, usd FROM whale_trades WHERE coin=$1 AND ts > now() - $2::interval AND usd >= $3 ORDER BY ts DESC LIMIT 500",
                              _coin(req), timedelta(seconds=secs), float(req.query.get("min_usd", 0)))
     return j([dict(r) for r in rows])
+async def whale_report(req):
+    coin, window = _coin(req), _win(req, "15m")
+    if coin not in config.COINS or window not in whale_flow.WINDOWS:
+        return web.json_response({"error": "Use a monitored coin and window: 5m, 15m, 1h, 4h"}, status=400)
+    try:
+        low = float(req.query["min_price"]) if "min_price" in req.query else None
+        high = float(req.query["max_price"]) if "max_price" in req.query else None
+        limit = int(req.query.get("limit", 20))
+    except ValueError:
+        return web.json_response({"error": "Invalid price or limit"}, status=400)
+    if (any(x is not None and (not math.isfinite(x) or x <= 0) for x in (low, high))
+            or (low is not None and high is not None and low > high) or not 1 <= limit <= 50):
+        return web.json_response({"error": "Use a positive price range and limit between 1 and 50"}, status=400)
+    return j(await whale_flow.report(coin, window, low, high, limit))
+
 async def deriv(req): return j(await analysis.deriv(_coin(req)))
 async def opts(req): return j(await analysis.options(_coin(req)))
 async def alts(req): return j(await analysis.alts(req.query.get("base", "BTC").upper()))
@@ -65,6 +83,6 @@ async def cvd(req):
 def app():
     a = web.Application(middlewares=[auth])
     a.add_routes([web.get("/", health), web.get("/health", health), web.get("/api/analysis", an), web.get("/api/heatmap", heat),
-                  web.get("/api/heatmap.png", heat_png), web.get("/api/liquidations", liq), web.get("/api/whales", whales),
+                  web.get("/api/heatmap.png", heat_png), web.get("/api/liquidations", liq), web.get("/api/whales", whales), web.get("/api/whale-flow", whale_report),
                   web.get("/api/derivatives", deriv), web.get("/api/options", opts), web.get("/api/alts", alts), web.get("/api/cvd", cvd)])
     return a

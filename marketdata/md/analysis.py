@@ -1,7 +1,7 @@
 """BTC odaklı çoklu borsa analizi: fiyat, OI, funding, long/short, likidasyon, balina akışı, CVD, Coinbase primi, opsiyon, altcoin uyumu."""
 import asyncio, json, math, time
 from datetime import datetime, timedelta, timezone
-from . import config, db, heatmap, http, state
+from . import config, db, heatmap, http, state, whales
 
 UTC = timezone.utc
 BN = "https://fapi.binance.com"
@@ -33,6 +33,7 @@ async def deriv(coin):
 
 async def flows(coin):
     out = {}
+    end = datetime.now(UTC).replace(second=0, microsecond=0)
     async with db.pool.acquire() as c:
         for w, s in WIN.items():
             iv = timedelta(seconds=s)
@@ -44,7 +45,8 @@ async def flows(coin):
                 L[r["side"]] += r["usd"]; L["by_venue"].setdefault(r["venue"], {})[r["side"]] = r["usd"]
             C = {r["market"]: {"buy": r["b"], "sell": r["s"], "delta": r["b"] - r["s"]} for r in cvd}
             W = {r["side"]: {"usd": r["usd"], "n": r["n"]} for r in wh}
-            out[w] = {"liquidations": L, "cvd": C, "whales": {"buy_usd": W.get("buy", {}).get("usd", 0), "sell_usd": W.get("sell", {}).get("usd", 0),
+            coverage = await whales.coverage(c, coin, end - iv, end)
+            out[w] = {"coverage": coverage, "liquidations": L, "cvd": C, "whales": {"buy_usd": W.get("buy", {}).get("usd", 0), "sell_usd": W.get("sell", {}).get("usd", 0),
                                                             "buy_n": W.get("buy", {}).get("n", 0), "sell_n": W.get("sell", {}).get("n", 0),
                                                             "net_usd": W.get("buy", {}).get("usd", 0) - W.get("sell", {}).get("usd", 0)}}
     return out
@@ -92,9 +94,8 @@ def summarize(a):
     oc = a["derivatives"]["oi_change_pct"]
     if "4h" in oc:
         d = "artıyor" if oc["4h"] > 0.5 else "azalıyor" if oc["4h"] < -0.5 else "yatay"
-        both = (p["4h"] > 0) == (oc["4h"] > 0)
-        s.append(f"Toplam OI 4 saatte {oc['4h']:+.2f}% ({d}). " + ("Fiyat ve OI aynı yönde: yeni pozisyon girişi." if both and abs(oc['4h']) > 0.5 else
-                 "Fiyat ve OI ters yönde: pozisyon kapanışı ağırlıklı." if abs(oc['4h']) > 0.5 else ""))
+        s.append(f"İzlenen borsalarda USD cinsinden OI 4 saatte {oc['4h']:+.2f}% ({d}). "
+                 "Fiyat etkisi ayrıştırılmadığı için kontrat miktarındaki değişim bu ölçümden çıkarılamaz.")
     fa = a["derivatives"]["funding_ann_pct"]
     if fa is not None:
         s.append(f"OI ağırlıklı funding yıllık {fa:+.1f}%: " + ("longlar ödüyor, long kalabalığı." if fa > 15 else "shortlar ödüyor, short kalabalığı." if fa < -5 else "nötre yakın."))
@@ -102,6 +103,12 @@ def summarize(a):
     L = f4["liquidations"]
     if L["long"] + L["short"] > 0:
         s.append(f"Son 4 saatte likidasyon: long ${L['long']/1e6:.1f}M, short ${L['short']/1e6:.1f}M.")
+    coverage = f4["coverage"]
+    if coverage["sources"]:
+        most = max(source["observed_minutes"] for source in coverage["sources"])
+        s.append(f"4 saatlik işlem verisi: en çok veri sağlayan kaynakta {most}/{coverage['expected_minutes']} dakika gözlendi.")
+    else:
+        s.append("4 saatlik pencerede henüz dakikalık işlem kaydı yok.")
     w = f4["whales"]
     s.append(f"Balina işlemleri (4s): alım ${w['buy_usd']/1e6:.1f}M, satım ${w['sell_usd']/1e6:.1f}M, net ${w['net_usd']/1e6:+.1f}M.")
     for m, lbl in (("spot", "Spot"), ("perp", "Perp")):
@@ -118,12 +125,44 @@ def summarize(a):
         e = o["expiries"][0]; s.append(f"En yakın büyük opsiyon vadesi {e['expiry']}: max pain ${e['max_pain']:,.0f}, put/call {e['put_call']:.2f}. DVOL {o.get('dvol') or 0:.1f}.")
     return s
 
+async def price_structure(coin):
+    async def frame(interval):
+        rows = await http.get(f"{BN}/fapi/v1/klines", {
+            "symbol": coin + "USDT", "interval": interval, "limit": 25,
+        })
+        now_ms = time.time() * 1000
+        closed = [row for row in rows if row[6] < now_ms]
+        if len(closed) < 2:
+            return None
+        last = closed[-1]
+        earlier = closed[:-1]
+        return {
+            "closed_at_utc": datetime.fromtimestamp(last[6] / 1000, UTC).isoformat(),
+            "open": float(last[1]), "high": float(last[2]), "low": float(last[3]), "close": float(last[4]),
+            "prior_range_high": max(float(row[2]) for row in earlier),
+            "prior_range_low": min(float(row[3]) for row in earlier),
+            "prior_range_bars": len(earlier),
+        }
+
+    intervals = ("15m", "1h", "4h")
+    results = await asyncio.gather(*(frame(interval) for interval in intervals), return_exceptions=True)
+    return {
+        "source": "Binance USD-M perpetual",
+        "frames": {interval: result if isinstance(result, dict) else None
+                   for interval, result in zip(intervals, results)},
+    }
+
+
 async def analysis(coin="BTC"):
     async def build():
-        (price, chg), der, fl, opt, hm = await asyncio.gather(price_changes(coin), deriv(coin), flows(coin), options(coin), heatmap.model(coin, "24h"))
+        (price, chg), der, fl, opt, hm, structure = await asyncio.gather(
+            price_changes(coin), deriv(coin), flows(coin), options(coin),
+            heatmap.model(coin, "24h"), price_structure(coin),
+        )
         a = {"coin": coin, "generated_utc": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"), "price": price, "price_change_pct": chg,
-             "derivatives": der, "flows": fl, "coinbase_premium_pct": coinbase_premium(coin), "options": opt,
-             "heatmap_24h": {"clusters": hm["clusters"], "price": hm["price"]}}
+             "price_structure": structure, "derivatives": der, "flows": fl, "coinbase_premium_pct": coinbase_premium(coin), "options": opt,
+             "heatmap_24h": {"estimated": True, "clusters": hm["clusters"], "price": hm["price"],
+                             "venues_used": hm["venues_used"], "generated_utc": hm["generated_utc"]}}
         a["summary"] = summarize(a)
         return a
     return await http.cached(f"analysis:{coin}", 30, build)

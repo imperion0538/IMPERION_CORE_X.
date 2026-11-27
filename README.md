@@ -25,3 +25,21 @@ REST (5 dk): Binance, Bybit, OKX, Bitget, Gate, Hyperliquid, Deribit OI/funding/
 `/health`, `/api/analysis?coin=BTC`, `/api/heatmap?coin=BTC&window=1h|4h|24h|7d|30d`, `/api/heatmap.png`, `/api/liquidations`, `/api/whales`, `/api/derivatives`, `/api/options`, `/api/alts`, `/api/cvd`.
 
 Isı haritası tahmini bir modeldir; veriler yatırım tavsiyesi değildir.
+
+### Büyük işlem akışı ve fiyat tepkisi
+
+`GET /api/whale-flow?coin=BTC&window=15m&min_price=61000&max_price=62500&limit=20`
+borsa ve piyasa türü bazında agresif alış/satış toplamlarını ve en son işlemleri
+döndürür. Fiyat sınırları isteğe bağlıdır. Pencereler: `5m`, `15m`, `1h`, `4h`.
+Telegram örneği: `/akis BTC 15m 61000 62500`.
+
+Kapsam, her kaynak için veri gözlenen kapalı dakikaların sayısıdır.
+Olay listesi mevcut dakikadaki işlemleri de içerir. Fiyat tepkisi,
+işlem fiyatından aynı borsa ve piyasanın 1, 5 ve 15 dakika sonraki dakika
+kovası kapanışına yüzde değişimdir. Kova henüz kapanmamış veya eksikse
+değer `null` kalır. Büyük işlem verisi katılımcı kimliği veya pozisyon açma/kapama
+bilgisi içermez.
+
+`/api/analysis` akış pencerelerinde borsa ve piyasa bazında gözlenen dakika
+sayısını raporlar. `/health` süreç durumuna ek olarak `data_status` ve
+`stale_streams` alanlarını döndürür.

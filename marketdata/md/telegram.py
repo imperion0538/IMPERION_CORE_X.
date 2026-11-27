@@ -2,7 +2,7 @@
 import asyncio, logging, time
 from datetime import datetime, timezone, timedelta
 import aiohttp
-from . import analysis, charts, config, db, fmt, heatmap, http, state
+from . import analysis, charts, config, db, fmt, heatmap, http, state, whales
 
 log = logging.getLogger("telegram")
 API = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}"
@@ -29,7 +29,7 @@ def _args(parts, default_window):
         elif p.upper() in config.COINS or p.upper().isalpha(): coin = p.upper()
     return coin, window
 
-LIVE_ONLY = ("/likidasyon", "/balina", "/oi", "/ls", "/analiz")
+LIVE_ONLY = ("/likidasyon", "/balina", "/akis", "/oi", "/ls", "/analiz")
 
 async def handle(chat, text):
     parts = text.strip().split(); cmd = parts[0].split("@")[0].lower(); rest = parts[1:]
@@ -56,6 +56,21 @@ async def handle(chat, text):
         byv = " · ".join(f"{v}: L {fmt.usd(x.get('long',0))} S {fmt.usd(x.get('short',0))}" for v, x in r["by_venue"].items())
         cap = f"<b>{coin} gerçekleşen likidasyonlar · {w}{fmt.coverage_note({'1h': 3600, '4h': 14400, '24h': 86400, '7d': 604800, '30d': 2592000}[w])}</b>\nLong {fmt.usd(r['total_long'])} · Short {fmt.usd(r['total_short'])}\n{byv}"
         return await photo(chat, charts.realized_png(r, f"{coin} gerçekleşen likidasyonlar · {w}"), cap)
+    if cmd == "/akis":
+        coin = _args(rest[:1], "15m")[0]
+        args = rest[1:] if rest and rest[0].upper() == coin else rest
+        window = WMAP.get(args[0], args[0]) if args else "15m"
+        if window not in whales.WINDOWS or len(args) not in (0, 1, 3):
+            return await send(chat, "Kullanım: /akis BTC 15m [alt_fiyat üst_fiyat]")
+        low = high = None
+        if len(args) == 3:
+            try:
+                low, high = map(float, args[1:])
+            except ValueError:
+                return await send(chat, "Fiyat sınırlarını sayı olarak gir.")
+            if not 0 < low <= high < float("inf"):
+                return await send(chat, "Alt ve üst fiyat sınırlarını kontrol et.")
+        return await send(chat, fmt.whale_flow_text(await whales.report(coin, window, low, high, 8)))
     if cmd == "/balina":
         coin, w = _args(rest, "4h")
         secs = {"1h": 3600, "4h": 14400, "24h": 86400, "7d": 604800, "30d": 2592000}[w]
