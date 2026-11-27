@@ -16,14 +16,16 @@ async def test_single_writer_and_takeover(monkeypatch):
     first = db.pool
     async with first.acquire() as c:
         await c.execute("INSERT INTO deriv_snap (ts, venue, coin) VALUES (now(), 'test', 'BTC') ON CONFLICT DO NOTHING")
+        assert await c.fetchval("SELECT count(*) FROM deriv_snap WHERE venue = 'test'") == 1
         await c.execute("DELETE FROM deriv_snap WHERE venue = 'test'")
-    with pytest.raises(asyncpg.RaiseError):
-        await stranger.execute("INSERT INTO deriv_snap (ts, venue, coin) VALUES (now(), 'test2', 'BTC')")
+        assert await c.fetchval("SELECT count(*) FROM deriv_snap WHERE venue = 'test'") == 0
+    await stranger.execute("INSERT INTO deriv_snap (ts, venue, coin) VALUES (now(), 'test2', 'BTC')")
+    assert await stranger.fetchval("SELECT count(*) FROM deriv_snap WHERE venue = 'test2'") == 0  # sessizce atlandı
     importlib.reload(db)
     monkeypatch.setattr(config, "DATABASE_URL", URL)
     await db.init()
-    with pytest.raises(asyncpg.RaiseError):
-        async with first.acquire() as c:
-            await c.execute("INSERT INTO deriv_snap (ts, venue, coin) VALUES (now(), 'test3', 'BTC')")
+    async with first.acquire() as c:
+        await c.execute("INSERT INTO deriv_snap (ts, venue, coin) VALUES (now(), 'test3', 'BTC')")
+        assert await c.fetchval("SELECT count(*) FROM deriv_snap WHERE venue = 'test3'") == 0
     assert await db.is_writer()
     await stranger.close(); await first.close(); await db.pool.close()

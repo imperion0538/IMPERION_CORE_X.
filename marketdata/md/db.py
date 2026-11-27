@@ -14,8 +14,10 @@ CREATE TABLE IF NOT EXISTS writer_lock (id INT PRIMARY KEY DEFAULT 1, app TEXT N
 CREATE TABLE IF NOT EXISTS migrations (name TEXT PRIMARY KEY, applied TIMESTAMPTZ NOT NULL DEFAULT now());
 CREATE OR REPLACE FUNCTION md_single_writer() RETURNS trigger AS $$
 BEGIN
+  -- Aktif yazıcı olmayan süreçlerin satırları sessizce atlanır (hata fırlatılmaz: eski kod çökme döngüsüne girip
+  -- borsalara tekrar tekrar istek atmasın). Kilit sahibini kaybeden yeni kod, writer_watchdog ile kendini kapatır.
   IF current_setting('application_name') IS DISTINCT FROM (SELECT app FROM writer_lock WHERE id = 1) THEN
-    RAISE EXCEPTION 'md_single_writer: % aktif yazıcı değil', current_setting('application_name');
+    RETURN NULL;
   END IF;
   IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
   RETURN NEW;
