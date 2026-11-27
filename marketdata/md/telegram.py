@@ -3,7 +3,7 @@ import asyncio, json, logging, time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 import aiohttp
-from . import analysis, charts, config, db, fmt, heatmap, http, orderbook, state, whales
+from . import analysis, card4k, charts, config, db, fmt, heatmap, http, orderbook, state, whales
 
 log = logging.getLogger("telegram")
 API = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}"
@@ -68,7 +68,7 @@ async def deliver_card():
                     log.info("Telegram 4K kart teslimi başarılı")
 
 
-KEYWORDS = {"arsiv", "arşiv", "dosya"}
+KEYWORDS = {"arsiv", "arşiv", "dosya", "ozet", "özet"}
 
 def _args(parts, default_window):
     coin, window = "BTC", default_window
@@ -103,7 +103,12 @@ async def handle(chat, text):
         if rest and rest[0].lower() in ("arsiv", "arşiv"):
             return await send_card(chat)
         coin = _args(rest, "24h")[0]
-        return await photo(chat, await live_card(coin), f"<b>{coin} canlı analiz kartı</b> · 1920×1080", document=bool(rest and rest[-1].lower() == "dosya"))
+        if rest and rest[-1].lower() == "ozet":
+            return await photo(chat, await live_card(coin), f"<b>{coin} canlı özet kartı</b> · 1920×1080")
+        png = await card4k.build(coin)
+        cap = f"<b>{coin}USDT teknik analiz kartı</b> · 4K · {datetime.now(timezone.utc).strftime('%H:%M')} UTC\nKoşullu senaryolar teyit bekler; yatırım tavsiyesi değildir."
+        await photo(chat, png, cap)
+        return await photo(chat, png, f"{coin}USDT · 3840×2160 PNG (tam çözünürlük)", document=True)
     if cmd == "/derinlik":
         coin = _args(rest, "24h")[0]
         d = await orderbook.latest(coin)

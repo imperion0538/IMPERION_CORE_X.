@@ -100,7 +100,7 @@ HELP = """<b>IMPERION Market Data</b>
 /oi [COIN] — borsa bazında OI ve funding
 /ls [COIN] — long/short oranları
 /opsiyon [COIN] — Deribit vadeleri, max pain, GEX ve Greeks
-/kart [COIN] [dosya] — canlı analiz kartı (1920×1080); /kart arsiv — 26.11 tarihli 4K kart
+/kart [COIN] — 4K teknik analiz kartı (canlı); /kart ozet — 1920×1080 özet kartı; /kart arsiv — 26.11 tarihli kart
 /derinlik [COIN] — birleşik emir defteri: ±%0,5/1/2/5 derinlik, dengesizlik, duvarlar
 /defter [COIN] [1s|4s|24s] — emir defteri ısı haritası (zaman × fiyat)
 /cvd [COIN] [4s|24s|7g] — spot ve perp CVD grafiği

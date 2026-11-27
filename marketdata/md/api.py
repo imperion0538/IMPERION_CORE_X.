@@ -3,7 +3,7 @@ import hmac, json, math, time
 from datetime import timedelta
 from aiohttp import web
 from pathlib import Path
-from . import analysis, charts, config, db, heatmap, orderbook, state, whales as whale_flow
+from . import analysis, card4k, charts, config, db, heatmap, orderbook, state, whales as whale_flow
 
 def _key_ok(req):
     if not config.API_KEY: return False
@@ -124,6 +124,9 @@ async def card_png(req):
     return web.Response(body=charts.analysis_card_png(a, h, d), content_type="image/png")
 
 
+async def card4k_png(req):
+    return web.Response(body=await card4k.build(_coin(req)), content_type="image/png")
+
 async def db_conns(req):
     return j({"self": db.APP_NAME, "connections": await db.connections()})
 
@@ -134,5 +137,5 @@ def app():
                   web.get("/api/derivatives", deriv), web.get("/api/options", opts), web.get("/api/alts", alts), web.get("/api/cvd", cvd),
                   web.get("/panel", panel), web.get("/api/coins", coins), web.get("/api/depth", depth), web.get("/api/orderbook.png", depth_png),
                   web.get("/api/cvd.png", cvd_png), web.get("/api/liquidations.png", liq_png), web.get("/api/card.png", card_png),
-                  web.get("/api/db-connections", db_conns)])
+                  web.get("/api/db-connections", db_conns), web.get("/api/card4k.png", card4k_png)])
     return a
