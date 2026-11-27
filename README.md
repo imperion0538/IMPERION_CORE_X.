@@ -8,6 +8,7 @@
 WebSocket: Binance (perp + spot işlemler, likidasyonlar), Bybit (işlemler, likidasyonlar), OKX (işlemler, likidasyonlar), Coinbase (spot işlemler), Hyperliquid (işlemler).
 REST (5 dk): Binance, Bybit, OKX, Bitget, Gate, Hyperliquid, Deribit OI/funding/long-short. Deribit opsiyonları (15 dk).
 Emir defteri (1 dk): Binance perp + spot, Bybit, OKX (tam derinlik), Coinbase.
+Makro (saatlik): DXY, US 10Y, SPX (Yahoo Finance). BTC ETF flow placeholder.
 
 Funding oranları her borsanın gerçek ödeme aralığına (1/4/8 saat) göre 8 saatliğe normalize edilir.
 
@@ -35,6 +36,11 @@ tahmini likidasyon ısı haritası, emir defteri ısı haritası, CVD ve gerçek
 ## API
 `/health`, `/api/analysis?coin=BTC`, `/api/heatmap?coin=BTC&window=1h|4h|24h|7d|30d`, `/api/heatmap.png`, `/api/liquidations`, `/api/whales`, `/api/derivatives`, `/api/options`, `/api/alts`, `/api/cvd`.
 
+Yeni araştırma uçları:
+- `/api/research?coin=BTC` — 4 ajanlı orkestrasyon (structure, flow, macro, synthesis) + skorlar
+- `/api/macro` — DXY, 10Y, SPX son gözlem
+- `/api/scores?coin=BTC` — yön bias + cascade heuristic skorlar
+
 Emir defteri ve grafikler: `/api/depth?coin=BTC` (bantlar, dengesizlik, duvarlar), `/api/orderbook.png?coin=BTC&hours=4`,
 `/api/cvd.png?coin=BTC&hours=24`, `/api/liquidations.png?coin=BTC&window=24h`, `/api/card.png?coin=BTC` (canlı analiz kartı), `/api/coins`.
 
@@ -43,6 +49,8 @@ Emir defteri ve grafikler: `/api/depth?coin=BTC` (bantlar, dengesizlik, duvarlar
 `/isi [COIN] [1s|4s|24s|7g|30g]` · `/likidasyon` · `/balina` · `/akis` · `/oi` · `/ls` · `/opsiyon` · `/altlar` ·
 `/derinlik [COIN]` — emir defteri derinliği ve duvarlar · `/defter [COIN] [1s|4s|24s]` — emir defteri ısı haritası ·
 `/cvd [COIN] [4s|24s|7g]` — spot/perp CVD grafiği · `/durum` — akış sağlığı.
+
+Yeni araştırma komutları: `/arastirma [COIN]`, `/senaryo [COIN]`, `/makro`, `/skor [COIN]`.
 
 ## Geliştirme
 ```
@@ -53,6 +61,16 @@ python -m pytest -q            # TEST_DATABASE_URL verilirse veritabanı kilidi 
 GitHub Actions her push ve PR'da testleri PostgreSQL 16 ile çalıştırır.
 
 Isı haritası tahmini bir modeldir; veriler yatırım tavsiyesi değildir.
+
+### İleri düzey piyasa araştırma katmanı (yeni)
+
+- **Makro veri** (`md/macro.py`): DXY, US 10Y, SPX saatlik poll. `macro_snap` tablosu. Status: observed / insufficient_data.
+- **Araştırma orkestratörü** (`md/research.py`): Market Structure, Flow & Liquidity, Macro & Sentiment, Synthesis ajanları mevcut analiz + makro üzerinden çalışır. Yapılandırılmış JSON + Türkçe özet.
+- **Skorlama** (`md/scoring.py`): Yön bias (-100..+100) ve cascade stress heuristic. Feature extraction (OI change, funding, Coinbase premium vb.).
+- Yeni API: `/api/research`, `/api/macro`, `/api/scores`.
+- Telegram: `/arastirma`, `/senaryo`, `/makro`, `/skor`.
+
+On-chain, haber/sentiment ve ML modelleri gelecek entegrasyonlar olarak planlanmıştır. Mevcut sistem gözlenen veriden üretilir; sentetik veri yok.
 
 ### Büyük işlem akışı ve fiyat tepkisi
 
