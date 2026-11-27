@@ -107,3 +107,7 @@ The original Advanced V2 prototype is superseded by the existing Railway single-
 - `/api/options/flow?coin=BTC`: BTC/ETH inverse options premium flow over the last 15 minutes. Capped responses and invalid records are marked partial; unavailable is not zero. Put/call premium ratio differs from OI ratio.
 - `TELEGRAM_CARD_ONLY=1` (default): original 4K design, full-resolution PNG document only. /kart, /btc, /eth, /sol, /analiz and /kart arsiv; other analysis remains available via HTTP API. Scheduled reports and rate-limited alerts send 4K documents. Set 0 only to restore legacy text and summary commands.
 - No live order execution or automatic position opening is added. On-chain data and independent durable event streaming remain future integrations, not advertised as live.
+
+### IMPERION CORE X interactive command center
+
+`/panel` is the responsive 4K-capable HTML/CSS dashboard with an animated projected 3D torus/coin, real candle chart, observed CVD, liquidity estimates, orderbook walls, derivatives, Deribit options, whale prints, anomaly and coverage, correlation, health, and original 4K card. No invented trade signals or PnL. `/panel/classic` retains the previous panel. `/api/candles?coin=BTC&frame=15m` accepts monitored coins and 15m/1h/4h. Dashboard polls real APIs every 30s, health every 10s; API key remains in page memory only. 3D geometry is decorative, not an AI model. Fullscreen adapts to the display; the original analysis card is 3840×2160.

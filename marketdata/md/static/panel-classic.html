@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>IMPERION Market Data</title>
+<style>
+  :root { --bg:#0f1419; --panel:#161c24; --line:#252c36; --fg:#e6e9ef; --muted:#8b95a7; --up:#26a69a; --down:#ef5350; }
+  * { box-sizing:border-box }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif }
+  .wrap { max-width:1400px; margin:0 auto; padding:16px }
+  header { display:flex; flex-wrap:wrap; gap:12px; align-items:baseline; justify-content:space-between }
+  h1 { margin:0; font-size:22px }
+  .price { font-size:30px; font-variant-numeric:tabular-nums }
+  .muted { color:var(--muted) }
+  .chg span { margin-right:12px; font-variant-numeric:tabular-nums }
+  .up { color:var(--up) } .down { color:var(--down) }
+  select, button { background:var(--panel); color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:6px 10px; font:inherit }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px; margin:16px 0 }
+  .tile { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px; min-width:0 }
+  .tile .k { color:var(--muted); font-size:12px }
+  .tile .v { font-size:18px; margin-top:4px; font-variant-numeric:tabular-nums }
+  .charts { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(420px,100%),1fr)); gap:12px; margin-top:12px }
+  .charts figure { margin:0; background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:8px; min-width:0 }
+  .charts img { width:100%; display:block; border-radius:4px }
+  figcaption { color:var(--muted); font-size:12px; padding:6px 4px 0 }
+  ul { padding-left:18px; margin:6px 0 0 } li { margin:2px 0 }
+</style>
+</head>
+<body><div class="wrap">
+<header>
+  <div><h1>IMPERION Market Data</h1><div class="muted" id="ts">yükleniyor…</div></div>
+  <div>
+    <select id="coin" aria-label="Coin"></select>
+    <select id="win" aria-label="Zaman aralığı"><option value="1h">1s</option><option value="4h">4s</option><option value="24h" selected>24s</option><option value="7d">7g</option><option value="30d">30g</option></select>
+    <button id="refresh" type="button">Yenile</button>
+  </div>
+</header>
+<div><span class="price" id="price">—</span> <span class="chg" id="chg"></span></div>
+<div class="grid" id="tiles"></div>
+<div class="tile"><div class="k">Özet</div><ul id="summary"></ul></div>
+<div class="charts">
+  <figure><img id="img-heat" alt="Tahmini likidasyon ısı haritası"><figcaption>Tahmini likidasyon ısı haritası (Binance + Bybit + OKX OI modeli)</figcaption></figure>
+  <figure><img id="img-ob" alt="Emir defteri ısı haritası"><figcaption>Emir defteri ısı haritası, son 4 saat</figcaption></figure>
+  <figure><img id="img-cvd" alt="CVD grafiği"><figcaption>Spot ve perp CVD, son 24 saat</figcaption></figure>
+  <figure><img id="img-liq" alt="Gerçekleşen likidasyonlar"><figcaption>Gerçekleşen likidasyonlar</figcaption></figure>
+</div>
+<p class="muted">Veriler bilgilendirme amaçlıdır, yatırım tavsiyesi değildir. Sayfa 60 saniyede bir yenilenir.</p>
+</div>
+<script>
+const $ = (id) => document.getElementById(id);
+function usd(v) {
+  if (v === null || v === undefined || isNaN(v)) return "—";
+  const a = Math.abs(v), s = v < 0 ? "-" : "";
+  if (a >= 1e9) return s + "$" + (a / 1e9).toFixed(2) + "B";
+  if (a >= 1e6) return s + "$" + (a / 1e6).toFixed(1) + "M";
+  if (a >= 1e3) return s + "$" + (a / 1e3).toFixed(0) + "K";
+  return s + "$" + a.toFixed(0);
+}
+function pct(v, d) { if (v === null || v === undefined) return "—"; return (v > 0 ? "+" : "") + v.toFixed(d === undefined ? 2 : d) + "%"; }
+function cls(v) { return (v || 0) >= 0 ? "up" : "down"; }
+function tile(k, v, c) {
+  const d = document.createElement("div"); d.className = "tile";
+  const a = document.createElement("div"); a.className = "k"; a.textContent = k;
+  const b = document.createElement("div"); b.className = "v" + (c ? " " + c : ""); b.textContent = v;
+  d.append(a, b); return d;
+}
+async function load() {
+  const coin = $("coin").value || "BTC", win = $("win").value, t = Date.now();
+  $("img-heat").src = "/api/heatmap.png?coin=" + coin + "&window=" + win + "&t=" + t;
+  $("img-ob").src = "/api/orderbook.png?coin=" + coin + "&hours=4&t=" + t;
+  $("img-cvd").src = "/api/cvd.png?coin=" + coin + "&hours=24&t=" + t;
+  $("img-liq").src = "/api/liquidations.png?coin=" + coin + "&window=" + win + "&t=" + t;
+  try {
+    const [a, report] = await Promise.all([
+      fetch("/api/analysis?coin=" + coin).then(r => r.json()),
+      fetch("/api/report?coin=" + coin).then(r => r.ok ? r.json() : null).catch(() => null),
+    ]);
+    $("ts").textContent = a.generated_utc + " UTC";
+    $("price").textContent = "$" + a.price.toLocaleString("en-US", { maximumFractionDigits: 2 });
+    const pc = a.price_change_pct;
+    $("chg").replaceChildren(...["1h", "4h", "24h"].map((w) => { const s = document.createElement("span"); s.className = cls(pc[w]); s.textContent = w + " " + pct(pc[w]); return s; }));
+    const d = a.derivatives, f = a.flows["4h"], ob = a.orderbook;
+    const spot = f.cvd.spot ? f.cvd.spot.delta : null, perp = f.cvd.perp ? f.cvd.perp.delta : null;
+    const tiles = [
+      tile("Toplam OI", usd(d.oi_total_usd)),
+      tile("OI 4s değişim", pct(d.oi_change_pct["4h"]), cls(d.oi_change_pct["4h"])),
+      tile("Funding yıllık", pct(d.funding_ann_pct, 1)),
+      tile("Likidasyon 4s (L / S)", usd(f.liquidations.long) + " / " + usd(f.liquidations.short)),
+      tile("Balina net 4s", usd(f.whales.net_usd), cls(f.whales.net_usd)),
+      tile("Spot CVD 4s", usd(spot), cls(spot)),
+      tile("Perp CVD 4s", usd(perp), cls(perp)),
+      tile("Coinbase primi", pct(a.coinbase_premium_pct, 3), cls(a.coinbase_premium_pct)),
+    ];
+    if (ob) tiles.push(tile("Defter ±%1 dengesizlik", ob.bands["1"].imbalance.toFixed(2), cls(ob.bands["1"].imbalance)));
+    if (a.options && a.options.expiries && a.options.expiries.length) {
+      const e = a.options.expiries[0];
+      tiles.push(tile("Max pain " + e.expiry, "$" + e.max_pain.toLocaleString("en-US")));
+    }
+    const flow = report?.whale_liquidity;
+    if (flow) {
+      tiles.push(tile("15 dk büyük işlem, spot / perp", usd(flow.by_market.spot.net_usd) + " / " + usd(flow.by_market.perp.net_usd)));
+      const c = flow.coverage;
+      const best = Math.max(0, ...c.sources.map(s => s.observed_minutes));
+      tiles.push(tile("15 dk akış kapsamı", best + "/" + c.expected_minutes + " dk · " + c.sources.length + " kaynak"));
+    }
+    $("tiles").replaceChildren(...tiles);
+    $("summary").replaceChildren(...a.summary.map((s) => { const li = document.createElement("li"); li.textContent = s; return li; }));
+  } catch (e) {
+    $("ts").textContent = "Veri alınamadı: " + e.message;
+  }
+}
+(async () => {
+  try {
+    const c = await (await fetch("/api/coins")).json();
+    $("coin").replaceChildren(...c.coins.map((x) => new Option(x, x)));
+  } catch (e) {
+    $("coin").replaceChildren(new Option("BTC", "BTC"));
+  }
+  $("coin").addEventListener("change", load);
+  $("win").addEventListener("change", load);
+  $("refresh").addEventListener("click", load);
+  load();
+  setInterval(load, 60000);
+})();
+</script>
+</body></html>

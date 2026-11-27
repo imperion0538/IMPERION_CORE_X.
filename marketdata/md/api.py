@@ -1,9 +1,10 @@
 """HTTP API: Claude ve diğer istemciler için. /health dışındaki uçlar X-API-Key ister."""
 import hmac, json, math, time
+import asyncio
 from datetime import timedelta
 from aiohttp import web
 from pathlib import Path
-from . import advanced, analysis, card4k, charts, config, db, heatmap, orderbook, state, whales as whale_flow, reports
+from . import advanced, analysis, card4k, charts, config, db, heatmap, http, orderbook, state, whales as whale_flow, reports
 
 def _key_ok(req):
     if not config.API_KEY: return False
@@ -23,7 +24,7 @@ def _rate_ok(req, limit=60):
 
 @web.middleware
 async def auth(req, handler):
-    if req.path in ("/", "/health", "/panel") or _key_ok(req):
+    if req.path in ("/", "/health", "/panel", "/panel/classic") or _key_ok(req):
         return await handler(req)
     if config.PUBLIC_READ and req.method == "GET":
         if not _rate_ok(req): return web.json_response({"error": "rate limited"}, status=429)
@@ -120,7 +121,40 @@ def _hours(req, d=4, mx=720):
 
 
 async def panel(req): return web.FileResponse(PANEL, headers={"Cache-Control": "no-cache"})
+async def classic_panel(req):
+    return web.FileResponse(PANEL.with_name("panel-classic.html"), headers={"Cache-Control": "no-cache"})
+
 async def coins(req): return j({"coins": config.COINS})
+
+async def dashboard_tickers(req):
+    now = time.time()
+    items = {}
+    for coin in config.COINS:
+        quote = state.last_price.get(("binance", "perp", coin))
+        if quote and 0 <= now - quote[1] <= 120:
+            items[coin] = {"price": quote[0], "age_seconds": round(now - quote[1], 1),
+                           "source": "Binance USD-M perpetual"}
+        else:
+            items[coin] = {"price": None, "age_seconds": None, "source": "unavailable"}
+    return j(items)
+
+async def dashboard_candles(req):
+    coin, frame = _coin(req), req.query.get("frame", "15m")
+    if coin not in config.COINS or frame not in ("15m", "1h", "4h"):
+        return web.json_response({"error": "Invalid coin or frame"}, status=400)
+    async def build():
+        rows = await http.get("https://fapi.binance.com/fapi/v1/klines",
+                              {"symbol": coin + "USDT", "interval": frame, "limit": 120})
+        now = time.time() * 1000
+        candles = [{"t": int(row[0]), "o": float(row[1]), "h": float(row[2]), "l": float(row[3]),
+                    "c": float(row[4]), "v": float(row[5]), "closed": row[6] < now} for row in rows]
+        return {"source": "Binance USD-M perpetual", "coin": coin, "frame": frame,
+                "generated_ms": int(now), "candles": candles}
+    try:
+        return j(await http.cached(f"dashboard:candles:{coin}:{frame}", 20, build))
+    except Exception:
+        return web.json_response({"error": "Candle source unavailable"}, status=503)
+
 
 
 async def depth(req):
@@ -161,7 +195,7 @@ def app():
     a.add_routes([web.get("/", health), web.get("/health", health), web.get("/api/analysis", an), web.get("/api/advanced", advanced_report), web.get("/api/options/flow", options_flow), web.get("/api/report", live_report), web.get("/api/heatmap", heat),
                   web.get("/api/heatmap.png", heat_png), web.get("/api/liquidations", liq), web.get("/api/whales", whales), web.get("/api/whale-flow", whale_report),
                   web.get("/api/derivatives", deriv), web.get("/api/options", opts), web.get("/api/alts", alts), web.get("/api/cvd", cvd),
-                  web.get("/panel", panel), web.get("/api/coins", coins), web.get("/api/depth", depth), web.get("/api/orderbook.png", depth_png),
+                  web.get("/panel", panel), web.get("/panel/classic", classic_panel), web.get("/api/candles", dashboard_candles), web.get("/api/tickers", dashboard_tickers), web.get("/api/coins", coins), web.get("/api/depth", depth), web.get("/api/orderbook.png", depth_png),
                   web.get("/api/cvd.png", cvd_png), web.get("/api/liquidations.png", liq_png), web.get("/api/card.png", card_png),
                   web.get("/api/db-connections", db_conns), web.get("/api/card4k.png", card4k_png)])
     return a
