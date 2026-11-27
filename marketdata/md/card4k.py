@@ -132,7 +132,7 @@ def _chart(fig, rect, cs, res, tf, tag, tag_fc, extra):
         return bb.expanded(1.0, 1.0).padded(14)
 
     for y, text, col in labels:
-        t = ax.text(len(cs) - 0.5, y, text, color=col, fontsize=12, fontweight="bold", va="center", ha="right", zorder=8,
+        t = ax.text(len(cs) - 0.5, y, text, color=col, fontsize=13, fontweight="bold", va="center", ha="right", zorder=8,
                     bbox=dict(boxstyle="round,pad=0.25", fc="white", ec=col, lw=1, alpha=0.92))
         placed.append(extent(t))
     # bölge etiketleri: tercih edilen x'ten başlayarak çakışmayan ilk konuma yerleşir
@@ -151,14 +151,14 @@ def _chart(fig, rect, cs, res, tf, tag, tag_fc, extra):
     ax.axhline(price, color=ORANGE, linewidth=1.4, zorder=2)
     ax.text(right, price, f" {tr_num(price, 2)} ", color="white", fontsize=15, fontweight="bold", va="center", ha="left", zorder=7,
             bbox=dict(boxstyle="square,pad=0.25", fc=ORANGE, ec=ORANGE), clip_on=False)
-    ax.yaxis.tick_right(); ax.tick_params(axis="y", labelsize=14, colors=INK); ax.tick_params(axis="x", labelbottom=False, length=0)
+    ax.yaxis.tick_right(); ax.tick_params(axis="y", labelsize=15, colors=INK); ax.tick_params(axis="x", labelbottom=False, length=0)
     ax.yaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda v, _: tr_num(v, 2)))
     for s in ax.spines.values(): s.set_visible(False)
     ax.grid(axis="y", color="#eef0f3", linewidth=1)
     delta = res["delta"][-len(cs):]
     axd.bar(xs, delta, color=[CANDLE_UP if d >= 0 else CANDLE_DN for d in delta], width=0.75, alpha=0.75)
     axd.axhline(0, color=LINE, linewidth=1)
-    axd.yaxis.tick_right(); axd.tick_params(axis="y", labelsize=11, colors=SUB); axd.tick_params(axis="x", labelsize=14, colors=INK)
+    axd.yaxis.tick_right(); axd.tick_params(axis="y", labelsize=12, colors=SUB); axd.tick_params(axis="x", labelsize=15, colors=INK)
     axd.yaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda v, _: f"{v / 1e3:,.0f}K" if abs(v) >= 1e3 else f"{v:,.0f}"))
     axd.yaxis.get_offset_text().set_visible(False)
     for s in axd.spines.values(): s.set_visible(False)
@@ -183,7 +183,7 @@ def _scenarios(fig, rect, scs):
                  bbox=dict(boxstyle="round,pad=0.2", fc=col, ec=col))
         fig.text(x0 + 0.03, by + bh - 0.025, f"{s['side']} – {s['title']}", fontsize=21, fontweight="bold", color=col, va="center")
         cond = "\n".join(textwrap.wrap("Koşul: " + s["condition"], 96)[:2])
-        fig.text(x0 + 0.008, by + bh - 0.046, cond, fontsize=12.5, color=INK, va="top", linespacing=1.25)
+        fig.text(x0 + 0.008, by + bh - 0.046, cond, fontsize=13.5, color=INK, va="top", linespacing=1.25)
         cols = ["Giriş", "Stop", "TP1", "TP2", "TP3", "TP4"]
         vals = [f"{tr_num(s['entry'][0])} – {tr_num(s['entry'][1])}", tr_num(s["stop"])] + [tr_num(t) for t in s["tps"]] + ["—"] * (4 - len(s["tps"]))
         widths = [0.30, 0.14, 0.14, 0.14, 0.14, 0.14]
@@ -191,14 +191,14 @@ def _scenarios(fig, rect, scs):
         for c, v, wd in zip(cols, vals, widths):
             ww = (w - 0.012) * wd
             fig.patches.append(Rectangle((cx, ty), ww, 0.032, transform=fig.transFigure, facecolor="#f9fafb", edgecolor=LINE, linewidth=1.2, zorder=-1))
-            fig.text(cx + ww / 2, ty + 0.023, c, ha="center", va="center", fontsize=13, fontweight="bold", color=RED if c == "Stop" else INK)
-            fig.text(cx + ww / 2, ty + 0.009, v, ha="center", va="center", fontsize=13, color=RED if c == "Stop" else INK)
+            fig.text(cx + ww / 2, ty + 0.023, c, ha="center", va="center", fontsize=14, fontweight="bold", color=RED if c == "Stop" else INK)
+            fig.text(cx + ww / 2, ty + 0.009, v, ha="center", va="center", fontsize=14, color=RED if c == "Stop" else INK)
             cx += ww
         fig.text(x0 + 0.008, by + 0.010, "✓ " + s["status"], fontsize=14, color=GREEN if "Teyit" in s["status"] else ORANGE,
                  fontstyle="italic", va="center", fontweight="bold")
 
 
-def _rows_panel(fig, rect, title, rows, size=16):
+def _rows_panel(fig, rect, title, rows, size=17):
     x0, y0, w, h = rect
     _box(fig, x0, y0, w, h, ec=GREEN, lw=2.5)
     _header_bar(fig, x0, y0 + h - 0.035, w, 0.035, title, size=22)
@@ -282,7 +282,7 @@ def render(c1, c4, analysis=None, heat=None, depth=None, now=None, coin="BTC"):
     cov = flow.get("coverage", {})
     observed = max((v["observed_minutes"] for v in cov.get("sources", [])), default=0)
     rows[-1] = ("4H işlem verisi:", f"En geniş kaynak {observed}/{cov.get('expected_minutes', 240)} dk", INK)
-    _rows_panel(fig, (0.006, 0.01, 0.26, 0.315), "Piyasa Özeti", rows, size=16)
+    _rows_panel(fig, (0.006, 0.01, 0.26, 0.315), "Piyasa Özeti", rows, size=17)
 
     lv = [("Majör Direnç Bölgesi:", f"{tr_num(h1['major_res'][0])} – {tr_num(h1['major_res'][1])}"),
           ("İkincil Direnç:", f"{tr_num(h1['resistance'][0])} – {tr_num(h1['resistance'][1])}"),
@@ -324,7 +324,7 @@ def render(c1, c4, analysis=None, heat=None, depth=None, now=None, coin="BTC"):
     fig.text(x0 + 0.022, y0 + h - 0.03, "Önemli Not", fontsize=26, fontweight="bold", color=GREEN, va="center")
     fig.text(x0 + 0.01, y0 + h - 0.055, "\n".join(textwrap.wrap(
         "Tüm seviyeler ve senaryolar koşulludur. Herhangi bir kurulumun gerçekleştiği varsayılmamaktadır. "
-        "İşlem için mutlaka belirtilen teyit koşullarının sağlanması beklenmelidir.", 58)), fontsize=15, color=INK, va="top", linespacing=1.4)
+        "İşlem için mutlaka belirtilen teyit koşullarının sağlanması beklenmelidir.", 56)), fontsize=16, color=INK, va="top", linespacing=1.4)
     fig.text(x0 + 0.005, y0 + 0.095, "\n".join(textwrap.wrap(
         "Veri kaynakları: Binance (fiyat, taker deltası), Binance+Bybit+OKX (OI modeli), birleşik emir defteri. "
         "Seviyeler kural tabanlı algoritmayla otomatik üretilir. Bu görsel eğitim ve analiz amaçlıdır; yatırım tavsiyesi değildir.", 70)),
