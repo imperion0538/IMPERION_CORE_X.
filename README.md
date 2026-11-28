@@ -93,6 +93,7 @@ Isı haritası tahmini bir modeldir; veriler yatırım tavsiyesi değildir.
 - **Makro veri** (`md/macro.py`): DXY, US 10Y, SPX saatlik poll. `macro_snap` tablosu. Status: observed / insufficient_data.
 - **Araştırma orkestratörü** (`md/research.py`): Market Structure, Flow & Liquidity, Macro & Sentiment, Synthesis ajanları mevcut analiz + makro üzerinden çalışır. Yapılandırılmış JSON + Türkçe özet.
 - **İşlem öncesi dosya** (`dossier`, `/api/intelligence`): `BAKILIR`, `BEKLE` veya `BAKMA`. Dakikalık gözlem, 10 saniyelik kayma ve public funding/OI bu belgededir. Panelin üst şeridi yalnız bunu basar. Skor emir değildir ve dosyaya girmez. Tahmini likidasyon haritası gerçekleşen likidasyondan ayrıdır.
+- **Skorlama** (`md/scoring.py`): Mevcut yön ve cascade hesapları durur. Dosyaya ve panel şeridine girmez. Emir değildir.
 - Yeni API: `/api/research`, `/api/macro`, `/api/scores`.
 - Telegram: `/arastirma`, `/senaryo`, `/makro`, `/skor`.
 
