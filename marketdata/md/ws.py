@@ -22,12 +22,14 @@ async def run_stream(name, url, on_open, on_msg, ping=None, ping_every=20, on_di
     backoff = 1
     h = state.stream_health.setdefault(name, {"last_msg": 0, "connected": False, "reconnects": 0, "msgs": 0})
     while True:
+        connected_at = None
         try:
             async with aiohttp.ClientSession(trust_env=True) as s:
                 async with s.ws_connect(url, heartbeat=30, max_msg_size=0) as ws:
-                    log.info("%s bağlandı", name); h["connected"] = True; backoff = 1
+                    connected_at = time.monotonic()
+                    log.info("%s bağlandı", name); h["connected"] = True
                     if on_open: await on_open(ws)
-                    last_ping = time.time()
+                    last_ping = last_activity = time.time()
                     while True:
                         try:
                             msg = await ws.receive(timeout=ping_every)
@@ -36,15 +38,17 @@ async def run_stream(name, url, on_open, on_msg, ping=None, ping_every=20, on_di
                         if ping and time.time() - last_ping >= ping_every:
                             await ping(ws); last_ping = time.time()
                         if msg is None:
-                            if time.time() - h["last_msg"] > max(120, ping_every * 3):
+                            if time.time() - last_activity > max(120, ping_every * 3):
                                 break
                             continue
                         if msg.type == aiohttp.WSMsgType.TEXT:
                             if msg.data in ("pong", "ping"): continue
-                            state.touch(name)
+                            last_activity = time.time()
                             try:
                                 await on_msg(ws, json.loads(msg.data))
-                            except ResyncRequired:
+                                state.touch(name)
+                            except ResyncRequired as e:
+                                log.warning("%s yeniden eşitleme: %s", name, e)
                                 break
                             except Exception as e:  # tek mesaj hatası akışı durdurmasın
                                 log.warning("%s mesaj hatası: %s", name, e)
@@ -52,6 +56,8 @@ async def run_stream(name, url, on_open, on_msg, ping=None, ping_every=20, on_di
                             break
         except Exception as e:
             log.warning("%s bağlantı hatası: %s", name, e)
+        if connected_at is not None and time.monotonic() - connected_at >= 30:
+            backoff = 1
         if on_disconnect:
             on_disconnect()
         h["connected"] = False; h["reconnects"] += 1

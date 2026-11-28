@@ -136,3 +136,37 @@ async def test_partial_report_survives_all_upstreams_failing(monkeypatch):
     assert r["assessment"]["state"] == "VERİ YETERSİZ"
     assert r["price_consensus"]["reference"] is None
     assert all(s["status"] == "error" for s in r["source_status"].values())
+
+
+def test_binance_futures_bridge_and_pu_chain():
+    b = livebook.Book("binance", "perp", "BTC")
+    now = time.time()
+    b.apply([[99, 5]], [[101, 5]], 100, now, snapshot=True)
+    b.received = b.event_ts = 0
+    def delta(first, last, prev):
+        return {"U": first, "u": last, "pu": prev, "E": int(now * 1000), "b": [[99, 4]], "a": []}
+    assert b.view()["status"] != "live"
+    assert b.apply_futures(delta(80, 99, 79)) is False
+    assert b.apply_futures(delta(90, 100, 89)) is True
+    assert b.futures_synced and b.view()["status"] == "live"
+    assert b.apply_futures(delta(108, 110, 100)) is True
+    assert b.update_id == 110 and b.bids[99] == 4
+    assert b.apply_futures(delta(108, 110, 100)) is False
+    with pytest.raises(ws.ResyncRequired):
+        b.apply_futures(delta(130, 140, 120))
+    assert not b.valid and not b.futures_synced
+
+
+def test_binance_futures_missing_initial_bridge_fails_closed():
+    b = livebook.Book("binance", "perp", "BTC")
+    b.apply([[99, 5]], [[101, 5]], 100, time.time(), snapshot=True)
+    with pytest.raises(ws.ResyncRequired):
+        b.apply_futures({"U": 110, "u": 120, "pu": 109, "E": int(time.time()*1000), "b": [], "a": []})
+    assert not b.valid
+
+
+def test_binance_futures_endpoints_use_routed_paths():
+    import inspect
+    from md import derivfeed
+    assert "fstream.binance.com/public/stream" in inspect.getsource(livebook.binance_depth)
+    assert "fstream.binance.com/market/stream" in inspect.getsource(derivfeed.binance_mark)

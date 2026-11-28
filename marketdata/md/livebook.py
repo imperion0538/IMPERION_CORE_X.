@@ -2,7 +2,7 @@
 
 Delta'daki boyut azalması emir iptali veya gerçekleşme olabilir; burada ayrıştırılmaz.
 Bybit u/seq monotoniktir, ardışık +1 olması şart değildir. Kesin boşluk doğrulaması
-yalnız Binance U/u zincirinde yapılır. Defter derinliği sınırlıdır.
+yalnız Binance zincirinde yapılır: spot U/u, vadeli ilk U/u köprüsü ve sonraki pu/u. Defter derinliği sınırlıdır.
 """
 import asyncio
 import math
@@ -24,9 +24,11 @@ class Book:
     valid: bool = False
     invalid_reason: str = "snapshot bekleniyor"
     resets: int = 0
+    futures_synced: bool = False
 
     def invalidate(self, reason):
         self.valid = False
+        self.futures_synced = False
         self.invalid_reason = reason
         self.resets += 1
 
@@ -41,6 +43,7 @@ class Book:
                 quality.counters["book_sequence_gaps"] += 1
                 raise ws.ResyncRequired("sequence gap")
         if snapshot:
+            self.futures_synced = False
             self.bids, self.asks = {}, {}
         for target, levels in ((self.bids, bids), (self.asks, asks)):
             for row in levels:
@@ -63,13 +66,33 @@ class Book:
         self.valid, self.invalid_reason = True, None
         return True
 
+    def apply_futures(self, data):
+        """Binance USD-M: first U <= snapshot <= u; then pu == previous u."""
+        if not self.valid:
+            raise ws.ResyncRequired("futures snapshot required")
+        first, last, previous = int(data["U"]), int(data["u"]), int(data["pu"])
+        if last < self.update_id or (self.futures_synced and last == self.update_id):
+            return False
+        linked = previous == self.update_id if self.futures_synced else first <= self.update_id <= last
+        if not linked or first > last:
+            self.invalidate("vadeli sıra boşluğu")
+            quality.counters["book_sequence_gaps"] += 1
+            raise ws.ResyncRequired("futures sequence gap")
+        event_ts = data["E"] / 1000
+        if last == self.update_id:
+            self.event_ts, self.received = event_ts, time.time()
+        else:
+            self.apply(data["b"], data["a"], last, event_ts)
+        self.futures_synced = True
+        return True
+
     def view(self, now=None):
         now = time.time() if now is None else now
         age = now - self.event_ts if self.event_ts else None
         usable = self.valid and age is not None and -1 <= age < 10 and now - self.received < 10
         base = {"venue": self.venue, "market": self.market, "status": "live" if usable else "stale" if self.valid else "resync",
                 "age_seconds": round(age, 2) if age is not None else None,
-                "sequence_check": "U/u chain" if self.venue == "binance" else "full snapshot" if self.venue == "hyperliquid" else "monotonic u; transport reconnect resets",
+                "sequence_check": ("U/u then pu/u chain" if self.market == "perp" else "U/u chain") if self.venue == "binance" else "full snapshot" if self.venue == "hyperliquid" else "monotonic u; transport reconnect resets",
                 "reason": self.invalid_reason, "resets": self.resets, "update_id": self.update_id}
         if not usable:
             return base
@@ -118,7 +141,7 @@ def get_book(venue, market, coin):
 async def binance_depth(market):
     symbols = {c + "USDT": c for c in config.COINS}
     if market == "perp":
-        snap_url, host = "https://fapi.binance.com/fapi/v1/depth", "wss://fstream.binance.com/stream?streams="
+        snap_url, host = "https://fapi.binance.com/fapi/v1/depth", "wss://fstream.binance.com/public/stream?streams="
     else:
         snap_url, host = "https://api.binance.com/api/v3/depth", "wss://stream.binance.com:9443/stream?streams="
     url = host + "/".join(s.lower() + "@depth@100ms" for s in symbols)
@@ -126,14 +149,22 @@ async def binance_depth(market):
     async def on_open(socket):
         for coin in config.COINS:
             get_book("binance", market, coin).invalidate("yeniden bağlanıyor")
-        for symbol, coin in symbols.items():
+        async def load(symbol, coin):
             depth = await http.get(snap_url, {"symbol": symbol, "limit": 1000})
-            get_book("binance", market, coin).apply(depth["bids"], depth["asks"], depth["lastUpdateId"], time.time(), snapshot=True)
+            book = get_book("binance", market, coin)
+            book.apply(depth["bids"], depth["asks"], depth["lastUpdateId"], time.time(), snapshot=True)
+            book.received = 0
+            book.event_ts = 0
+        await asyncio.gather(*(load(symbol, coin) for symbol, coin in symbols.items()))
 
     async def on_msg(socket, message):
         data = message.get("data", message)
         if data.get("e") == "depthUpdate" and data["s"] in symbols:
-            get_book("binance", market, symbols[data["s"]]).apply(data["b"], data["a"], data["u"], data["E"] / 1000, first_id=data["U"])
+            book = get_book("binance", market, symbols[data["s"]])
+            if market == "perp":
+                book.apply_futures(data)
+            else:
+                book.apply(data["b"], data["a"], data["u"], data["E"] / 1000, first_id=data["U"])
 
     def disconnected():
         for coin in config.COINS:

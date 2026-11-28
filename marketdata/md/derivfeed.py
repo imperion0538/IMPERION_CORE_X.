@@ -58,7 +58,7 @@ async def binance_mark():
         state.note_deriv("binance", coin, price=data.get("p"), funding_8h=_funding(data.get("r"), hours),
                          transport="websocket", extra={"funding_interval_h": hours, "index_price": data.get("i")})
 
-    await ws.run_stream("deriv_binance_mark", "wss://fstream.binance.com/stream?streams=" + streams, None, on_msg)
+    await ws.run_stream("deriv_binance_mark", "wss://fstream.binance.com/market/stream?streams=" + streams, None, on_msg)
 
 
 async def binance_oi():
