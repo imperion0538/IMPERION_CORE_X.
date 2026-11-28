@@ -1,7 +1,7 @@
 """IMPERION Market Data: toplayıcıları, Telegram botunu ve API'yi başlatır."""
 import asyncio, logging, sys
 from aiohttp import web
-from md import api, config, db, orderbook, rest, telegram, ws, ingest, livebook, outbox, intelligence
+from md import api, config, db, orderbook, rest, telegram, ws, ingest, livebook, outbox, intelligence, observe, derivfeed
 
 logging.basicConfig(level=logging.INFO, stream=sys.stdout, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 log = logging.getLogger("main")
@@ -52,7 +52,7 @@ async def writer_watchdog():
             log.warning("yazıcı kontrolü yapılamadı: %s", e)
 
 async def main():
-    tasks = [*ws.ALL, *livebook.ALL, *rest.ALL, ingest.run, ingest.cleanup,
+    tasks = [*ws.ALL, *livebook.ALL, *derivfeed.ALL, *rest.ALL, ingest.run, ingest.cleanup, observe.run,
              orderbook.poll, outbox.run, intelligence.archive, *telegram.ALL]
     if not all(callable(task) for task in tasks):
         raise RuntimeError("Invalid service task registry")

@@ -8,7 +8,7 @@ import asyncio
 import math
 import time
 from dataclasses import dataclass, field
-from . import config, http, quality, ws
+from . import config, db, http, quality, ws
 
 
 @dataclass
@@ -69,7 +69,7 @@ class Book:
         usable = self.valid and age is not None and -1 <= age < 10 and now - self.received < 10
         base = {"venue": self.venue, "market": self.market, "status": "live" if usable else "stale" if self.valid else "resync",
                 "age_seconds": round(age, 2) if age is not None else None,
-                "sequence_check": "U/u chain" if self.venue == "binance" else "monotonic u; transport reconnect resets",
+                "sequence_check": "U/u chain" if self.venue == "binance" else "full snapshot" if self.venue == "hyperliquid" else "monotonic u; transport reconnect resets",
                 "reason": self.invalid_reason, "resets": self.resets, "update_id": self.update_id}
         if not usable:
             return base
@@ -115,23 +115,39 @@ def get_book(venue, market, coin):
     return BOOKS.setdefault((venue, market, coin), Book(venue, market, coin))
 
 
-async def binance_spot():
-    symbols = {c+"USDT": c for c in config.COINS}
-    url = "wss://stream.binance.com:9443/stream?streams=" + "/".join(s.lower()+"@depth@100ms" for s in symbols)
+async def binance_depth(market):
+    symbols = {c + "USDT": c for c in config.COINS}
+    if market == "perp":
+        snap_url, host = "https://fapi.binance.com/fapi/v1/depth", "wss://fstream.binance.com/stream?streams="
+    else:
+        snap_url, host = "https://api.binance.com/api/v3/depth", "wss://stream.binance.com:9443/stream?streams="
+    url = host + "/".join(s.lower() + "@depth@100ms" for s in symbols)
+
     async def on_open(socket):
-        for c in config.COINS:
-            get_book("binance", "spot", c).invalidate("yeniden bağlanıyor")
+        for coin in config.COINS:
+            get_book("binance", market, coin).invalidate("yeniden bağlanıyor")
         for symbol, coin in symbols.items():
-            d = await http.get("https://api.binance.com/api/v3/depth", {"symbol": symbol, "limit": 1000})
-            get_book("binance", "spot", coin).apply(d["bids"], d["asks"], d["lastUpdateId"], 0, snapshot=True)
+            depth = await http.get(snap_url, {"symbol": symbol, "limit": 1000})
+            get_book("binance", market, coin).apply(depth["bids"], depth["asks"], depth["lastUpdateId"], time.time(), snapshot=True)
+
     async def on_msg(socket, message):
-        d = message.get("data", message)
-        if d.get("e") == "depthUpdate" and d["s"] in symbols:
-            get_book("binance", "spot", symbols[d["s"]]).apply(d["b"], d["a"], d["u"], d["E"]/1000, first_id=d["U"])
+        data = message.get("data", message)
+        if data.get("e") == "depthUpdate" and data["s"] in symbols:
+            get_book("binance", market, symbols[data["s"]]).apply(data["b"], data["a"], data["u"], data["E"] / 1000, first_id=data["U"])
+
     def disconnected():
         for coin in config.COINS:
-            get_book("binance", "spot", coin).invalidate("bağlantı kesildi")
-    await ws.run_stream("l2_binance_spot", url, on_open, on_msg, on_disconnect=disconnected)
+            get_book("binance", market, coin).invalidate("bağlantı kesildi")
+
+    await ws.run_stream("l2_binance_" + market, url, on_open, on_msg, on_disconnect=disconnected)
+
+
+async def binance_spot():
+    await binance_depth("spot")
+
+
+async def binance_perp():
+    await binance_depth("perp")
 
 
 async def bybit_market(market):
@@ -165,10 +181,85 @@ async def bybit_perp():
     await bybit_market("perp")
 
 
+async def hyperliquid_book():
+    async def on_open(socket):
+        for coin in config.COINS:
+            get_book("hyperliquid", "perp", coin).invalidate("yeniden bağlanıyor")
+            await socket.send_json({"method": "subscribe", "subscription": {"type": "l2Book", "coin": coin}})
+
+    async def ping(socket):
+        await socket.send_json({"method": "ping"})
+
+    async def on_msg(socket, message):
+        if message.get("channel") != "l2Book":
+            return
+        data = message.get("data") or {}
+        coin = data.get("coin")
+        levels = data.get("levels") or []
+        if coin not in config.COINS or len(levels) < 2:
+            return
+        bids = [[row["px"], row["sz"]] for row in levels[0]]
+        asks = [[row["px"], row["sz"]] for row in levels[1]]
+        ts = float(data.get("time") or time.time() * 1000) / 1000
+        get_book("hyperliquid", "perp", coin).apply(bids, asks, int(ts * 1000), ts, snapshot=True)
+
+    def disconnected():
+        for coin in config.COINS:
+            get_book("hyperliquid", "perp", coin).invalidate("bağlantı kesildi")
+
+    await ws.run_stream("l2_hyperliquid", "wss://api.hyperliquid.xyz/ws", on_open, on_msg, ping, 45, on_disconnect=disconnected)
+
+
+def _bps(slip, size, side):
+    cell = (slip.get(str(size)) or {}).get(side) or {}
+    return cell.get("slippage_bps")
+
+
+async def record_slippage():
+    """On saniyede bir, yalnız görülen kaymayı yazar. Bayat defterde bps boş kalır."""
+    while True:
+        await asyncio.sleep(10 - time.time() % 10)
+        if db.pool is None:
+            continue
+        ts = datetime_bucket()
+        rows = []
+        for (venue, market, coin), book in list(BOOKS.items()):
+            if not book.event_ts:
+                continue
+            view = book.view()
+            slip = view.get("slippage") or {}
+            rows.append((ts, venue, market, coin, view.get("mid"), view.get("spread_bps"),
+                         _bps(slip, 10000, "buy"), _bps(slip, 10000, "sell"),
+                         _bps(slip, 100000, "buy"), _bps(slip, 100000, "sell"), view["status"]))
+        if not rows:
+            continue
+        try:
+            async with db.pool.acquire() as conn:
+                await conn.executemany(
+                    """INSERT INTO book_slip (ts, venue, market, coin, mid, spread_bps,
+                           buy_10k_bps, sell_10k_bps, buy_100k_bps, sell_100k_bps, status)
+                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+                       ON CONFLICT (coin, venue, market, ts) DO UPDATE SET
+                         mid=EXCLUDED.mid, spread_bps=EXCLUDED.spread_bps,
+                         buy_10k_bps=EXCLUDED.buy_10k_bps, sell_10k_bps=EXCLUDED.sell_10k_bps,
+                         buy_100k_bps=EXCLUDED.buy_100k_bps, sell_100k_bps=EXCLUDED.sell_100k_bps,
+                         status=EXCLUDED.status""", rows)
+        except Exception:
+            quality.counters["book_slip_write_errors"] += 1
+
+
+def datetime_bucket():
+    from datetime import datetime, timezone
+    return datetime.fromtimestamp(int(time.time() // 10) * 10, timezone.utc)
+
+
+PAIRS = (("binance", "spot"), ("binance", "perp"), ("bybit", "spot"), ("bybit", "perp"), ("hyperliquid", "perp"))
+
+
 def snapshot(coin):
-    rows = [get_book(v, m, coin).view() for v, m in (("binance", "spot"), ("bybit", "spot"), ("bybit", "perp"))]
-    return {"sources": rows, "live_sources": sum(r["status"] == "live" for r in rows),
+    rows = [get_book(v, m, coin).view() for v, m in PAIRS]
+    return {"sources": rows, "expected_sources": len(PAIRS), "live_sources": sum(r["status"] == "live" for r in rows),
             "method": "Observed visible L2. Size reductions do not distinguish cancellations from fills; hidden orders are unknown."}
 
 
-ALL = [binance_spot, bybit_spot, bybit_perp]
+ALL = [binance_spot, binance_perp, bybit_spot, bybit_perp, hyperliquid_book, record_slippage]

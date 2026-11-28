@@ -7,7 +7,7 @@ log = logging.getLogger("db")
 # Bu sürecin veritabanındaki kimliği. Yalnızca writer_lock tablosundaki kimlik yazabilir;
 # böylece kapanmamış eski dağıtımlar (ör. Railway'de "REMOVED" görünüp çalışmaya devam eden süreç) veri yazamaz.
 APP_NAME = f"md:{os.environ.get('RAILWAY_DEPLOYMENT_ID', socket.gethostname())[:40]}:{int(time.time())}:{os.urandom(4).hex()}"
-WRITE_TABLES = ("alert_outbox", "research_snapshots", "trade_write_batches", "liquidations", "trades_1m", "whale_trades", "deriv_snap", "options_snap", "telegram_deliveries", "depth_snap", "macro_snap")
+WRITE_TABLES = ("alert_outbox", "research_snapshots", "trade_write_batches", "liquidations", "trades_1m", "whale_trades", "deriv_snap", "options_snap", "telegram_deliveries", "depth_snap", "macro_snap", "obs_1m", "book_slip")
 
 GUARD = """
 CREATE TABLE IF NOT EXISTS writer_lock (id INT PRIMARY KEY DEFAULT 1, app TEXT NOT NULL, since TIMESTAMPTZ NOT NULL DEFAULT now(), CHECK (id = 1));
@@ -79,8 +79,23 @@ CREATE INDEX IF NOT EXISTS alert_outbox_pending ON alert_outbox(next_attempt) WH
 CREATE TABLE IF NOT EXISTS research_snapshots (
   coin TEXT NOT NULL, ts TIMESTAMPTZ NOT NULL, data JSONB NOT NULL, PRIMARY KEY(coin, ts));
 CREATE TABLE IF NOT EXISTS macro_snap (ts TIMESTAMPTZ PRIMARY KEY, data JSONB NOT NULL);
+CREATE TABLE IF NOT EXISTS obs_1m (
+  ts TIMESTAMPTZ NOT NULL, coin TEXT NOT NULL,
+  spot_buy_usd DOUBLE PRECISION NOT NULL, spot_sell_usd DOUBLE PRECISION NOT NULL,
+  perp_buy_usd DOUBLE PRECISION NOT NULL, perp_sell_usd DOUBLE PRECISION NOT NULL,
+  venue_median DOUBLE PRECISION, coinbase_close DOUBLE PRECISION, hyperliquid_close DOUBLE PRECISION,
+  usd_basis_bps DOUBLE PRECISION, sources INTEGER NOT NULL,
+  PRIMARY KEY (coin, ts));
+CREATE INDEX IF NOT EXISTS obs_1m_coin_ts ON obs_1m (coin, ts DESC);
+CREATE TABLE IF NOT EXISTS book_slip (
+  ts TIMESTAMPTZ NOT NULL, venue TEXT NOT NULL, market TEXT NOT NULL, coin TEXT NOT NULL,
+  mid DOUBLE PRECISION, spread_bps DOUBLE PRECISION,
+  buy_10k_bps DOUBLE PRECISION, sell_10k_bps DOUBLE PRECISION,
+  buy_100k_bps DOUBLE PRECISION, sell_100k_bps DOUBLE PRECISION,
+  status TEXT NOT NULL, PRIMARY KEY (coin, venue, market, ts));
+CREATE INDEX IF NOT EXISTS book_slip_coin_ts ON book_slip (coin, ts DESC);
 """
-RETENTION = [("alert_outbox", 7), ("research_snapshots", 35), ("trade_write_batches", 2), ("depth_snap", 10), ("trades_1m", 35), ("whale_trades", 120), ("liquidations", 120), ("deriv_snap", 120), ("options_snap", 60), ("macro_snap", 90)]
+RETENTION = [("alert_outbox", 7), ("research_snapshots", 35), ("trade_write_batches", 2), ("depth_snap", 10), ("trades_1m", 35), ("whale_trades", 120), ("liquidations", 120), ("deriv_snap", 120), ("options_snap", 60), ("macro_snap", 90), ("obs_1m", 35), ("book_slip", 7)]
 pool: asyncpg.Pool | None = None
 
 DEDUPE_2026_11_27 = """

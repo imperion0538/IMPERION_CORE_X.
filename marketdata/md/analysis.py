@@ -2,6 +2,7 @@
 import asyncio, json, math, time
 from datetime import datetime, timedelta, timezone
 from . import config, db, heatmap, http, orderbook, state, whales
+from .derivfeed import overlay_live
 
 UTC = timezone.utc
 BN = "https://fapi.binance.com"
@@ -19,6 +20,7 @@ async def deriv(coin):
         for w, s in WIN.items():
             past[w] = await c.fetch("SELECT DISTINCT ON (venue) venue, oi_usd, price FROM deriv_snap WHERE coin=$1 AND ts <= now() - $2::interval AND ts > now() - $2::interval - interval '30 minutes' ORDER BY venue, ts DESC", coin, timedelta(seconds=s))
     venues = {r["venue"]: {"snapshot_utc": r["ts"].isoformat(), "age_seconds": max(0, int((datetime.now(UTC)-r["ts"]).total_seconds())), "price": r["price"], "oi_usd": r["oi_usd"], "funding_8h": r["funding_8h"], **json.loads(r["extra"] or "{}")} for r in latest}
+    venues = overlay_live(venues, state.live_deriv, coin, time.time())
     fresh_venues = {k: v for k, v in venues.items() if v["age_seconds"] <= 420}
     tot = sum(v["oi_usd"] or 0 for v in fresh_venues.values())
     oi_chg = {}

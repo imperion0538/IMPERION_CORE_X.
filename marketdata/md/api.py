@@ -43,7 +43,7 @@ async def health(req):
     stale = [name for name, h in state.stream_health.items()
              if name != "binance_liq" and now - h["last_msg"] > (420 if name == "rest_snapshots" else 120)]
     data_status = "starting" if not state.stream_health else "degraded" if stale else "active"
-    return j({"status": "ok", "version": "2.0", "data_status": data_status, "ingest_queue": ingest.QUEUE.qsize(),
+    return j({"status": "ok", "version": "2.1", "data_status": data_status, "ingest_queue": ingest.QUEUE.qsize(),
               "ingestion": dict(quality.counters), "stale_streams": stale, "streams": {n: {"age_s": int(now - h["last_msg"]), "reconnects": h["reconnects"], "msgs": h["msgs"]} for n, h in state.stream_health.items()}})
 
 
@@ -162,7 +162,7 @@ async def heat_png(req):
     c, w = _coin(req), _win(req)
     if w not in heatmap.WINDOWS: return web.json_response({"error": f"window şunlardan biri olmalı: {list(heatmap.WINDOWS)}"}, status=400)
     h = await heatmap.model(c, w)
-    return web.Response(body=charts.heatmap_png(h, f"{c} tahmini likidasyon haritası · {w}"), content_type="image/png")
+    return web.Response(body=charts.heatmap_png(h, f"{c} tahmini likidasyon modeli · {w} · gerçekleşen tasfiye değildir"), content_type="image/png")
 async def liq(req): return j(await heatmap.realized(_coin(req), _win(req)))
 async def whales(req):
     secs = {"1h": 3600, "4h": 14400, "24h": 86400, "7d": 604800}.get(_win(req, "4h"), 14400)

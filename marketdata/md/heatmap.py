@@ -66,7 +66,8 @@ async def model(coin="BTC", window="24h"):
         series = {"binance": bn, "bybit": by, "okx": ok}
         ref, bins, used = simulate(prices, series, rng)
         return {"coin": coin, "window": window, "price": ref, "interval": interval, "venues_used": {v: k for v, k in used.items() if k},
-                "bins": bins, "clusters": clusters(bins, ref), "generated_utc": datetime.now(UTC).strftime("%Y-%m-%d %H:%M")}
+                "bins": bins, "clusters": clusters(bins, ref), "generated_utc": datetime.now(UTC).strftime("%Y-%m-%d %H:%M"),
+                "kind": "assumed_leverage_model", "not_exchange_liquidations": True}
     return await http.cached(f"heat:{coin}:{window}", 120, build)
 
 def simulate(prices, series, rng, n=50, leverage=LEVERAGE):
@@ -117,7 +118,8 @@ async def realized(coin="BTC", window="24h", n=40):
     async with db.pool.acquire() as c:
         rows = await c.fetch("SELECT venue, side, price, usd FROM liquidations WHERE coin=$1 AND ts > now() - $2::interval", coin, timedelta(seconds=secs))
     if not rows:
-        return {"coin": coin, "window": window, "total_long": 0, "total_short": 0, "by_venue": {}, "bins": []}
+        return {"coin": coin, "window": window, "kind": "observed_liquidation_prints", "not_a_model": True,
+                "total_long": 0, "total_short": 0, "by_venue": {}, "bins": []}
     lo, hi = min(r["price"] for r in rows), max(r["price"] for r in rows)
     step = (hi - lo) / n or 1
     bins = [{"lo": lo + i * step, "hi": lo + (i + 1) * step, "long_usd": 0.0, "short_usd": 0.0} for i in range(n)]
@@ -126,5 +128,6 @@ async def realized(coin="BTC", window="24h", n=40):
         i = min(n - 1, int((r["price"] - lo) / step))
         bins[i]["long_usd" if r["side"] == "long" else "short_usd"] += r["usd"]
         d = byv.setdefault(r["venue"], {"long": 0.0, "short": 0.0}); d[r["side"]] += r["usd"]
-    return {"coin": coin, "window": window, "total_long": sum(b["long_usd"] for b in bins), "total_short": sum(b["short_usd"] for b in bins),
+    return {"coin": coin, "window": window, "kind": "observed_liquidation_prints", "not_a_model": True,
+            "total_long": sum(b["long_usd"] for b in bins), "total_short": sum(b["short_usd"] for b in bins),
             "by_venue": byv, "count": len(rows), "bins": bins}

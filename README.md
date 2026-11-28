@@ -16,9 +16,10 @@ IMPERION, kripto işlemi öncesinde spot alım-satımı, vadeli pozisyonlanmayı
 - `marketdata/` — ana servis: toplayıcılar, ısı haritası modeli, analiz, Telegram botu, HTTP API.
 
 ## Veri kaynakları
-WebSocket: Binance (perp + spot işlemler, likidasyonlar), Bybit ve OKX (spot + perp işlemleri ve vadeli likidasyonlar), Coinbase (spot işlemler), Hyperliquid (işlemler).
-REST (5 dk): Binance, Bybit, OKX, Bitget, Gate, Hyperliquid, Deribit OI/funding/long-short. Deribit opsiyonları (15 dk).
-Canlı L2: Binance spot ve Bybit spot/perp. Binance sıra zincirinde boşluk görülürse defter yeniden kurulur. Bybit yeni snapshot ve artan güncelleme kimliğiyle izlenir. Dakikalık REST derinlik görüntüleri Binance spot/perp, Bybit, OKX ve Coinbase üzerinden alınır. Defterlerin görünür kademe sayıları sınırlıdır.
+WebSocket: Binance (perp + spot işlemler, likidasyonlar, mark/funding), Bybit ve OKX (spot + perp işlemleri ve vadeli likidasyonlar), Bybit ticker (OI ve funding), Coinbase (spot işlemler), Hyperliquid (işlemler, `activeAssetCtx`, `l2Book`).
+REST: Binance open interest 30 saniye (public sokette yoktur). Diğer borsaların OI/funding yedeği 5 dakika: Binance, Bybit, OKX, Bitget, Gate, Hyperliquid, Deribit. Deribit opsiyonları 15 dakika.
+Canlı L2: Binance spot, Binance USD-M, Bybit spot/perp, Hyperliquid perp. Görünen kayma 10 saniyede bir `book_slip` tablosuna yazılır. Binance sıra zincirinde boşluk görülürse defter yeniden kurulur. Hyperliquid her mesajda tam görünen kitaptır. Dakikalık REST derinlik görüntüleri ayrıdır ve canlı kaymanın yerine geçmez.
+Kapanmış her dakika `obs_1m` satırına yazılır: spot ve perp delta, borsa kapanış medyanı, Coinbase–Hyperliquid USD farkı, kaynak sayısı.
 
 Ücretsiz bağlam verileri Farside Investors günlük BTC/ETH ETF akışları, DefiLlama stablecoin arzı, Fair Economy haftalık USD takvimi, CoinDesk RSS ve Bitcoin için mempool.space ağ ölçümlerini içerir. Kaynak kesintisi, eski değer, tamamlanmamış ETF günü ve desteklenmeyen varlık ayrı belirtilir. Zincir üstü adres sahipliği için doğrulanmış etiket sağlayıcısı gerekir.
 
@@ -49,8 +50,7 @@ Eski bir süreç kapanmadan çalışmaya devam ederse yazmaları reddedilir; yen
 ## Web paneli
 
 `/panel/research` canlı veri kalitesi, emir defteri, ücretsiz piyasa kaynakları ve Türkçe 4K araştırma kartını ana panelden açar. `/api/forward-evidence` biriken araştırma özetlerinden geçmiş karşılaştırma sunar.
-`/panel` — fiyat, OI, funding, likidasyon, balina, CVD, Coinbase primi, emir defteri dengesizliği, opsiyon özetiyle
-tahmini likidasyon ısı haritası, emir defteri ısı haritası, CVD ve gerçekleşen likidasyon grafikleri. Görünür fiyat 3 sn, araştırma 15 sn, grafikler 60 sn aralıkla sorgulanır. Her veri sağlayıcısının kendi güncelleme sıklığı geçerlidir.
+`/panel` üst şeridi yalnız `/api/intelligence` belgesini basar: BAKILIR, BEKLE veya BAKMA. Bu bir skor veya emir değildir. Tahmini likidasyon haritası ayrı karttır ve gerçekleşen likidasyon toplamıyla birleştirilmez. Emir, bakiye ve private API yoktur.
 
 ## API
 
@@ -74,6 +74,10 @@ Emir defteri ve grafikler: `/api/depth?coin=BTC` (bantlar, dengesizlik, duvarlar
 
 Yeni araştırma komutları: `/arastirma [COIN]`, `/senaryo [COIN]`, `/makro`, `/skor [COIN]`.
 
+## Railway
+
+Servis kökü `marketdata` ise başlangıç `python main.py`, sağlık ucu `/health`. Depo kökünden derlenirse `railway.toml` aynı sürece `marketdata` içinden girer. `PORT` ve `DATABASE_URL` Railway tarafından verilir. Emir anahtarı veya private API yoktur.
+
 ## Geliştirme
 ```
 cd marketdata
@@ -88,7 +92,7 @@ Isı haritası tahmini bir modeldir; veriler yatırım tavsiyesi değildir.
 
 - **Makro veri** (`md/macro.py`): DXY, US 10Y, SPX saatlik poll. `macro_snap` tablosu. Status: observed / insufficient_data.
 - **Araştırma orkestratörü** (`md/research.py`): Market Structure, Flow & Liquidity, Macro & Sentiment, Synthesis ajanları mevcut analiz + makro üzerinden çalışır. Yapılandırılmış JSON + Türkçe özet.
-- **Skorlama** (`md/scoring.py`): Yön bias (-100..+100) ve cascade stress heuristic. Feature extraction (OI change, funding, Coinbase premium vb.).
+- **İşlem öncesi dosya** (`dossier`, `/api/intelligence`): `BAKILIR`, `BEKLE` veya `BAKMA`. Dakikalık gözlem, 10 saniyelik kayma ve public funding/OI bu belgededir. Panelin üst şeridi yalnız bunu basar. Skor emir değildir ve dosyaya girmez. Tahmini likidasyon haritası gerçekleşen likidasyondan ayrıdır.
 - Yeni API: `/api/research`, `/api/macro`, `/api/scores`.
 - Telegram: `/arastirma`, `/senaryo`, `/makro`, `/skor`.
 

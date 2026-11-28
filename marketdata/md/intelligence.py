@@ -3,7 +3,7 @@ import asyncio
 import statistics
 import time
 from datetime import datetime, timedelta, timezone
-from . import analysis, public_context, candles, config, context, db, evidence, http, ingest, livebook, orderbook, quality, state, whales
+from . import analysis, public_context, candles, config, context, db, evidence, http, ingest, livebook, orderbook, observe, quality, state, whales
 
 UTC = timezone.utc
 WINDOWS = {"5m": 5, "15m": 15, "1h": 60, "4h": 240, "24h": 1440}
@@ -163,18 +163,103 @@ def assess(frames, flows, derivatives, books, data_quality):
             "signal": None, "automatic_execution": False}
 
 
+def _structure(frame):
+    if not frame:
+        return None
+    close, high, low = frame["close"], frame["prior_20_high"], frame["prior_20_low"]
+    if close > high:
+        place = "üst kırılım"
+    elif close < low:
+        place = "alt kırılım"
+    else:
+        place = "aralık"
+    return {"regime": frame["regime"], "structure": place, "close": close, "prior_20_high": high, "prior_20_low": low}
+
+
+def _slip(source, size, side):
+    cell = ((source.get("slippage") or {}).get(str(size)) or {}).get(side) or {}
+    return cell.get("slippage_bps")
+
+
+def build_dossier(coin, frames, flows, derivatives, books, assessment, liquidations_doc, options):
+    """Tek okuma belgesi. Skor, hedef ve emir içermez."""
+    watch = {"VERİ YETERSİZ": "BAKMA", "ÇELİŞKİLER VAR": "BEKLE"}.get(assessment["state"], "BAKILIR")
+    place = {name: _structure(frames.get(name)) for name in ("15m", "1h", "4h")}
+    flow = {}
+    for name in ("15m", "1h", "4h"):
+        markets = (flows.get(name) or {}).get("markets") or {}
+        spot, perp = markets.get("spot") or {}, markets.get("perp") or {}
+        spot_delta, perp_delta = spot.get("delta_usd"), perp.get("delta_usd")
+        flow[name] = {"spot_delta_usd": spot_delta, "perp_delta_usd": perp_delta,
+                      "same_direction": spot_delta is not None and perp_delta is not None and spot_delta * perp_delta > 0}
+    cost = []
+    for source in books.get("sources") or []:
+        if source.get("status") != "live":
+            continue
+        cost.append({"venue": source["venue"], "market": source["market"], "spread_bps": source.get("spread_bps"),
+                     "buy_10k_bps": _slip(source, 10000, "buy"), "sell_10k_bps": _slip(source, 10000, "sell"),
+                     "buy_100k_bps": _slip(source, 100000, "buy"), "sell_100k_bps": _slip(source, 100000, "sell")})
+    venues = derivatives.get("venues") or {}
+    fresh = [v for v in venues.values() if v.get("funding_8h") is not None and v.get("oi_usd") is not None and v.get("age_seconds", 9999) <= 420]
+    funding_age = max((v["age_seconds"] for v in fresh), default=None)
+    rows = (liquidations_doc or {}).get("observed") or []
+    long_usd = sum(r["usd"] for r in rows if r["side"] == "long")
+    short_usd = sum(r["usd"] for r in rows if r["side"] == "short")
+    four = place.get("4h") or {}
+    spot15 = (flow.get("15m") or {}).get("spot_delta_usd")
+    bits = [watch, coin]
+    if four.get("structure"):
+        bits.append("4s " + four["structure"])
+    if spot15 is not None:
+        bits.append(f"15dk spot delta {spot15:+.0f} USD")
+    if funding_age is not None and funding_age > 180:
+        bits.append(f"funding yaşı {funding_age}s")
+    options_block = None
+    if coin in ("BTC", "ETH") and options:
+        options_block = {"stale": options.get("stale"), "age_seconds": options.get("age_seconds"),
+                         "snapshot_utc": options.get("snapshot_utc")}
+    return {"watch": watch, "state": assessment["state"], "headline_tr": " · ".join(bits),
+            "structure": place, "flow": flow, "cost": cost,
+            "crowd": {"funding_8h_weighted": derivatives.get("funding_8h_weighted"),
+                      "oi_total_usd": derivatives.get("oi_total_usd"),
+                      "oi_change_4h_pct": (derivatives.get("oi_change_pct") or {}).get("4h"),
+                      "funding_age_seconds": funding_age,
+                      "live": funding_age is not None and funding_age <= 180},
+            "realized_liquidations": {"window": "4h", "kind": "observed_liquidation_prints",
+                                      "long_usd": long_usd, "short_usd": short_usd,
+                                      "text": "4 saatte bildirilen long ve short likidasyonlar. Tahmini ısı haritası bu toplama dahil değildir."},
+            "liquidation_model": {"included": False, "note": "Tahmini ısı haritası bu belgede yoktur. /api/heatmap varsayılan kaldıraç modelidir."},
+            "options": options_block,
+            "counter_evidence": assessment["counter_evidence"], "blockers": assessment["blockers"],
+            "signal": None, "automatic_execution": False}
+
+
 async def generate(coin="BTC"):
     async def build():
         start = time.time()
+        ctx_task = asyncio.create_task(public_context.load(coin))
         jobs = {**{f"candles_{w}": candles.load(coin, w) for w in candles.INTERVALS},
                 "flows": flow_matrix(coin), "derivatives": analysis.deriv(coin),
                 "options": analysis.options(coin), "depth": orderbook.latest(coin),
                 "whales": whales.report(coin, "15m", limit=15), "liquidations": liquidations(coin),
-                "public_context": public_context.load(coin), "breadth": context.breadth(), "history": candles.load(coin, "1h", 1000)}
+                "breadth": context.breadth(), "history": candles.load(coin, "1h", 1000)}
         results = await asyncio.gather(*(asyncio.wait_for(task, 35) for task in jobs.values()), return_exceptions=True)
+        try:
+            pc = await asyncio.wait_for(ctx_task, 4)
+        except Exception as exc:
+            pc = exc
+        if not ctx_task.done():
+            ctx_task.cancel()
         parts = dict(zip(jobs, results))
         provenance = {name: {"status": "error" if isinstance(value, Exception) else "missing" if value is None else "available",
                              "error": type(value).__name__ if isinstance(value, Exception) else None} for name, value in parts.items()}
+        if isinstance(pc, Exception):
+            provenance["public_context"] = {"status": "error", "error": type(pc).__name__}
+        elif pc is None:
+            provenance["public_context"] = {"status": "missing", "error": None}
+        else:
+            provenance["public_context"] = {"status": "available", "error": None}
+            parts["public_context"] = pc
         parts = {k: v for k, v in parts.items() if v is not None and not isinstance(v, Exception)}
         frames = {w: technical(parts[f"candles_{w}"]) for w in candles.INTERVALS if f"candles_{w}" in parts}
         dq = quality.snapshot(coin)
@@ -188,7 +273,7 @@ async def generate(coin="BTC"):
             feeds.update({key: {"status": "unavailable", "source": labels[0]} for key, labels in public_context.FEEDS.items()})
         elif any(feeds[k].get("status") != "available" for k in public_context.FEEDS):
             provenance["public_context"]["status"] = "partial"
-        result = {"schema_version": "2.0", "coin": coin, "generated_utc": datetime.now(UTC).isoformat(),
+        result = {"schema_version": "2.1", "coin": coin, "generated_utc": datetime.now(UTC).isoformat(),
                   "assembly_seconds": round(time.time()-start, 2), "source_status": provenance,
                   "price_consensus": consensus(coin), "quality": dq, "timeframes": frames,
                   "flows": flows, "derivatives": der, "live_orderbooks": books,
@@ -213,11 +298,17 @@ async def generate(coin="BTC"):
         if dq["queue_size"] > 10000 or dq["last_commit_age_seconds"] is None or dq["last_commit_age_seconds"] > 10:
             result["assessment"]["blockers"].append("Kalıcı kayıt gecikiyor veya henüz başlamadı.")
             result["assessment"]["state"] = "VERİ YETERSİZ"
+        try:
+            result["minute_observations"] = await observe.load(coin)
+        except Exception:
+            result["minute_observations"] = {"status": "unavailable", "windows": {}}
+        result["dossier"] = build_dossier(coin, frames, flows, der, books, result["assessment"], result.get("liquidations"), result.get("options"))
         result["limitations"] = [
             "Büyük borsa işlemi, kimliği bilinen balina veya zincir üstü transfer anlamına gelmez.",
             "Emir defteri görünür ve sınırlı derinliktedir; emir azalması iptal/gerçekleşme olarak ayrıştırılamaz.",
             "GEX bayi pozisyonu değildir; işaretli GEX bir varsayımdır. Max pain fiyat hedefi değildir.",
             "Geçmiş benzerlikler canlı başarı olasılığı veya gelecekteki kâr vaadi değildir.",
+            "Tahmini likidasyon haritası gözlenen tasfiye değildir ve bu belgenin durumuna girmez.",
             "Her kaynak kendi zaman damgasını taşır; eşzamanlı borsa görüntüsü garantisi yoktur.",
         ]
         return result
@@ -261,8 +352,9 @@ def flow_risk_text(report):
 def text(report):
     from . import fmt
     a = report["assessment"]
+    dossier = report.get("dossier") or {}
     lines = [f"<b>IMPERION · {report['coin']} işlem öncesi araştırma</b>",
-             f"{report['generated_utc'][:19]} UTC · {a['state']}"]
+             f"{report['generated_utc'][:19]} UTC · {a['state']} · {dossier.get('watch', '')}"]
     price = report["price_consensus"]["reference"]
     if price:
         lines.append(f"Borsa medyanı: ${price:,.2f}")
@@ -271,7 +363,8 @@ def text(report):
             lines.append(f"\n<b>{name}</b>")
             lines.extend("• "+fmt.escape(v) for v in values)
     q = report["quality"]
-    lines.append(f"\nCanlı işlem kaynakları: {q['live_sources']}/{q['expected_sources']}; canlı L2: {report['live_orderbooks']['live_sources']}/3.")
+    books = report["live_orderbooks"]
+    lines.append(f"\nCanlı işlem kaynakları: {q['live_sources']}/{q['expected_sources']}; canlı L2: {books['live_sources']}/{books.get('expected_sources', len(books.get('sources') or []))}.")
     for interval, f in report["timeframes"].items():
         lines.append(f"{interval}: {f['regime']} · RSI {f['rsi14']:.1f} · ATR %{f['atr_pct']:.2f} · aralık {f['prior_20_low']:,.0f}–{f['prior_20_high']:,.0f}")
     lines.extend(flow_risk_text(report))
